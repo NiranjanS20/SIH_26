@@ -157,6 +157,7 @@ class WeightsModel(BaseModel):
     w_cognitive: float = 0.25 # Driver ergonomics objective
 
 class RouteRequest(BaseModel):
+    area: Optional[str] = None
     depot_lat: float
     depot_lon: float
     stops: List[StopModel]
@@ -166,6 +167,7 @@ class RouteRequest(BaseModel):
     algorithm: str = Field("qpso", pattern="^(qpso|ga|aco|pso|nn|cw)$")
 
 class BenchmarkRequest(BaseModel):
+    area: Optional[str] = None
     depot_lat: float
     depot_lon: float
     stops: List[StopModel]
@@ -696,7 +698,7 @@ async def solve_route(req: RouteRequest):
         raise HTTPException(status_code=400, detail="No vehicles provided")
 
     try:
-        _ensure_graph()
+        _ensure_graph(req.area)
         problem = _build_problem(req.stops, req.vehicles, req.depot_lat, req.depot_lon)
 
         weights_dict = req.weights.model_dump() if req.weights else {}
@@ -762,7 +764,7 @@ async def start_route_job(req: RouteRequest):
 
     def run_solver():
         try:
-            _ensure_graph()
+            _ensure_graph(req.area)
             problem = _build_problem(req.stops, req.vehicles, req.depot_lat, req.depot_lon)
             weights_dict = req.weights.model_dump() if req.weights else {}
             weights_dict.pop("w_cost", None)
@@ -992,3 +994,75 @@ async def get_fleet_eco_metrics():
             for r in result.get("routes", [])
         ],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Operations Intelligence Endpoints (Modules A, B, C, D)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/operations/weather-festive", tags=["operations"])
+async def get_weather_festive():
+    """Module A: Weather & Festive delay multipliers and demand surges."""
+    from src.operations.engine import weather_festive_engine
+    return weather_festive_engine.get_summary()
+
+
+class WeatherUpdateRequest(BaseModel):
+    condition: Optional[str] = None
+    rainfall_mm_hr: Optional[float] = None
+    waterlogging_risk: Optional[str] = None
+    festive_mode: Optional[str] = None
+
+
+@app.post("/operations/weather-festive/update", tags=["operations"])
+async def update_weather_festive(req: WeatherUpdateRequest):
+    """Module A: Manually inject weather or festive scenario for real-time response."""
+    from src.operations.engine import weather_festive_engine
+    if req.condition is not None:
+        weather_festive_engine.weather.condition = req.condition
+    if req.rainfall_mm_hr is not None:
+        weather_festive_engine.weather.rainfall_mm_per_hr = req.rainfall_mm_hr
+    if req.waterlogging_risk is not None:
+        weather_festive_engine.weather.waterlogging_risk = req.waterlogging_risk
+    if req.festive_mode is not None:
+        weather_festive_engine.festive.mode = req.festive_mode
+    return weather_festive_engine.get_summary()
+
+
+@app.get("/operations/wellbeing", tags=["operations"])
+async def get_driver_wellbeing():
+    """Module B: Driver Workload Strain Index (WSI) and fleet equity."""
+    from src.operations.engine import driver_wellbeing_engine
+    return driver_wellbeing_engine.get_fleet_wellbeing()
+
+
+class SimulateRequest(BaseModel):
+    scenario_id: str = "rain_5pm"
+
+
+@app.post("/operations/simulate", tags=["operations"])
+async def simulate_scenario(req: SimulateRequest):
+    """Module C: What-If simulation with side-by-side KPIs."""
+    from src.operations.engine import scenario_simulator
+    return scenario_simulator.run_simulation(req.scenario_id)
+
+
+@app.get("/operations/tips", tags=["operations"])
+async def get_corrective_tips():
+    """Module D: Top 3 ranked actionable tips with estimated benefit."""
+    from src.operations.engine import corrective_tips_engine
+    return corrective_tips_engine.get_ranked_tips()
+
+
+class TipActionRequest(BaseModel):
+    action: str = "apply"  # apply | dismiss
+
+
+@app.post("/operations/tips/{tip_id}/action", tags=["operations"])
+async def take_tip_action(tip_id: str, req: TipActionRequest):
+    """Module D: Apply or dismiss a tip."""
+    from src.operations.engine import corrective_tips_engine
+    new_status = "applied" if req.action == "apply" else "dismissed"
+    ok = corrective_tips_engine.update_tip_status(tip_id, new_status)
+    return {"tip_id": tip_id, "status": new_status, "success": ok}
+

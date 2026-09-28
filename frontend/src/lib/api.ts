@@ -6,6 +6,7 @@ export const AREAS = [
   { id: "lower_parel", label: "Lower Parel, Mumbai", center: { lat: 18.9953, lon: 72.83 } },
   { id: "andheri", label: "Andheri, Mumbai", center: { lat: 19.1136, lon: 72.8697 } },
   { id: "powai", label: "Powai, Mumbai", center: { lat: 19.1176, lon: 72.906 } },
+  { id: "borivali", label: "Borivali, Mumbai", center: { lat: 19.2288, lon: 72.8569 } },
 ] as const;
 
 export type AreaId = (typeof AREAS)[number]["id"];
@@ -177,3 +178,155 @@ export function solveRoute(body: Record<string, unknown>) {
 export function jobStreamUrl(jobId: string) {
   return `${API_BASE}/route/job/${jobId}/stream`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Operations Intelligence API Helpers (Modules A, B, C, D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type WeatherFestiveSummary = {
+  weather: {
+    condition: string;
+    rainfall_mm_hr: number;
+    forecast_1h_mm: number;
+    rain_prob_pct: number;
+    heat_index_c: number;
+    waterlogging_risk: string;
+  };
+  festive: {
+    mode: string;
+    is_public_holiday: boolean;
+    is_long_weekend: boolean;
+    active_event: string | null;
+  };
+  system_impact: {
+    weather_uplift_pct: number;
+    festive_uplift_pct: number;
+    fleet_demand_surge: number;
+    confidence: string;
+  };
+  zones: Record<string, {
+    name: string;
+    delay_multiplier: number;
+    demand_surge_factor: number;
+    flood_risk: string;
+    status: string;
+  }>;
+};
+
+export function fetchWeatherFestive() {
+  return jsonFetch<WeatherFestiveSummary>("/operations/weather-festive");
+}
+
+export function updateWeatherFestive(data: { condition?: string; rainfall_mm_hr?: number; waterlogging_risk?: string; festive_mode?: string }) {
+  return jsonFetch<WeatherFestiveSummary>("/operations/weather-festive/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export type WellbeingSummary = {
+  drivers: Array<{
+    id: number;
+    name: string;
+    vehicle: string;
+    wsi_score: number;
+    band: "green" | "amber" | "red";
+    label: string;
+    driving_hr: number;
+    longest_stretch_min: number;
+    break_deficit_min: number;
+    stops: number;
+  }>;
+  average_wsi: number;
+  peak_wsi: number;
+  gini_coefficient: number;
+  gini_threshold: number;
+  gini_compliant: boolean;
+  burnout_risk_count: number;
+  demanding_count: number;
+  optimal_count: number;
+};
+
+export function fetchDriverWellbeing() {
+  return jsonFetch<WellbeingSummary>("/operations/wellbeing");
+}
+
+export type SimulationResult = {
+  scenario: {
+    id: string;
+    title: string;
+    description: string;
+    weather: string;
+    festive: string;
+    fleet: string;
+  };
+  baseline: {
+    on_time_pct: number;
+    total_travel_time_min: number;
+    total_cost_inr: number;
+    co2_emissions_kg: number;
+    peak_driver_strain: number;
+    fleet_delay_ratio: number;
+  };
+  simulated: {
+    on_time_pct: number;
+    total_travel_time_min: number;
+    total_cost_inr: number;
+    co2_emissions_kg: number;
+    peak_driver_strain: number;
+    fleet_delay_ratio: number;
+    p90_duration_range?: string;
+    sla_failure_prob?: number;
+  };
+  deltas: {
+    travel_time_min: number;
+    cost_inr: number;
+    strain_points: number;
+    on_time_drop_pct: number;
+  };
+  recommended_mitigation: string;
+};
+
+export function simulateScenario(scenarioId: string) {
+  return jsonFetch<SimulationResult>("/operations/simulate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scenario_id: scenarioId }),
+  });
+}
+
+export type CorrectiveTip = {
+  id: string;
+  title: string;
+  category: string;
+  urgency: "high" | "medium" | "low";
+  trigger: string;
+  evidence: string;
+  action: string;
+  benefits: {
+    time_saved_min: number;
+    cost_saved_inr: number;
+    co2_saved_kg: number;
+    strain_reduction: number;
+  };
+  confidence_pct: number;
+  status: string;
+};
+
+export function fetchCorrectiveTips() {
+  return jsonFetch<CorrectiveTip[]>("/operations/tips");
+}
+
+export function takeTipAction(tipId: string, action: "apply" | "dismiss") {
+  return jsonFetch<{ tip_id: string; status: string; success: boolean }>(`/operations/tips/${tipId}/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+}
+
+export function fetchEcoMetrics() {
+  return jsonFetch<Record<string, any>>("/fleet/eco-metrics");
+}
+

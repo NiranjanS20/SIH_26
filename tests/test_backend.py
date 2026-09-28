@@ -199,3 +199,72 @@ def test_solvers_qpso_ga_aco():
     res_aco = ACOSolver(n_ants=10, max_iter=10).solve(prob, evaluator)
     assert len(res_aco.routes) == 1
 
+
+# ─── Operations Engine (Modules A - D) ──────────────────────────────────────
+
+def test_module_a_weather_festive_delays():
+    from src.operations.engine import weather_festive_engine
+    weather_festive_engine.weather.condition = "Heavy Monsoon"
+    weather_festive_engine.festive.mode = "Ganesh Visarjan"
+    summary = weather_festive_engine.get_summary()
+
+    assert summary["system_impact"]["weather_uplift_pct"] > 0
+    assert summary["system_impact"]["festive_uplift_pct"] > 0
+    assert summary["system_impact"]["fleet_demand_surge"] > 1.0
+    assert len(summary["zones"]) == 6
+    assert any("high" in z["flood_risk"].lower() for z in summary["zones"].values())
+
+
+def test_module_b_driver_wellbeing():
+    from src.operations.engine import driver_wellbeing_engine
+    report = driver_wellbeing_engine.get_fleet_wellbeing()
+
+    assert "drivers" in report
+    assert len(report["drivers"]) >= 3
+    driver = report["drivers"][0]
+    assert 0.0 <= driver["wsi_score"] <= 100.0
+    assert driver["band"] in ["green", "amber", "red"]
+    assert report["gini_coefficient"] >= 0.0
+    assert "gini_compliant" in report
+
+
+def test_module_c_scenario_simulator():
+    from src.operations.engine import scenario_simulator
+    res = scenario_simulator.run_simulation("rain_5pm")
+
+    assert "baseline" in res
+    assert "simulated" in res
+    assert "deltas" in res
+    assert res["simulated"]["total_travel_time_min"] >= res["baseline"]["total_travel_time_min"]
+    assert res["deltas"]["travel_time_min"] >= 0.0
+    assert len(res["scenario"]["title"]) > 0
+
+
+def test_module_d_corrective_tips():
+    from src.operations.engine import corrective_tips_engine
+    tips = corrective_tips_engine.get_ranked_tips()
+    assert len(tips) >= 1
+    first_id = tips[0]["id"]
+    ok = corrective_tips_engine.update_tip_status(first_id, "applied")
+    assert ok is True
+
+
+def test_geocoding_mumbai_fallbacks():
+    import asyncio
+    from src.geocoding import search
+
+    borivali = asyncio.run(search("Borivali East, Mumbai"))
+    assert len(borivali) > 0
+    assert 19.15 <= borivali[0]["lat"] <= 19.30
+    assert 72.80 <= borivali[0]["lon"] <= 72.95
+
+    malad = asyncio.run(search("Malad East, Mumbai"))
+    assert len(malad) > 0
+    assert 19.15 <= malad[0]["lat"] <= 19.25
+
+    santacruz = asyncio.run(search("Santacruz East, Mumbai"))
+    assert len(santacruz) > 0
+    assert 19.05 <= santacruz[0]["lat"] <= 19.12
+
+
+

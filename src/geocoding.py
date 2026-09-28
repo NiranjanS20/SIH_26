@@ -32,6 +32,44 @@ async def _rate_limit() -> None:
     _last_request_time = time.monotonic()
 
 
+# Common Mumbai neighborhoods and landmarks for resilient offline/fallback resolution
+_MUMBAI_FALLBACK_COORDS: Dict[str, Tuple[float, float]] = {
+    "bkc": (19.0654, 72.8656),
+    "bandra kurla complex": (19.0654, 72.8656),
+    "bandra": (19.0596, 72.8295),
+    "bandra east": (19.0620, 72.8470),
+    "bandra west": (19.0596, 72.8295),
+    "santacruz": (19.0805, 72.8415),
+    "santacruz east": (19.0825, 72.8490),
+    "santacruz west": (19.0830, 72.8360),
+    "andheri": (19.1136, 72.8697),
+    "andheri east": (19.1170, 72.8680),
+    "andheri west": (19.1190, 72.8280),
+    "borivali": (19.2288, 72.8569),
+    "borivali east": (19.2215, 72.8624),
+    "borivali west": (19.2300, 72.8450),
+    "malad": (19.1874, 72.8484),
+    "malad east": (19.1860, 72.8580),
+    "malad west": (19.1870, 72.8350),
+    "goregaon": (19.1663, 72.8526),
+    "kandivali": (19.2062, 72.8436),
+    "lower parel": (18.9953, 72.8300),
+    "churchgate": (18.9322, 72.8264),
+    "powai": (19.1176, 72.9060),
+    "dadar": (19.0178, 72.8478),
+    "kurla": (19.0699, 72.8780),
+    "ghatkopar": (19.0860, 72.9090),
+    "chembur": (19.0522, 72.8994),
+    "vikhroli": (19.1111, 72.9277),
+    "mulund": (19.1726, 72.9565),
+    "thane": (19.2183, 72.9781),
+    "vashi": (19.0771, 72.9986),
+    "colaba": (18.9067, 72.8147),
+    "marine lines": (18.9438, 72.8234),
+    "worli": (19.0135, 72.8153),
+}
+
+
 async def search(
     query: str,
     bbox: Optional[Tuple[float, float, float, float]] = None,
@@ -42,8 +80,8 @@ async def search(
 
     Parameters
     ----------
-    query : str — search text like "Churchgate, Mumbai"
-    bbox : Optional (south, west, north, east) — restrict results to area
+    query : str — search text like "Churchgate, Mumbai" or "Borivali East"
+    bbox : Optional (south, west, north, east) — prefer results in area without hard boundary
     limit : int — max results
 
     Returns list of dicts sorted by relevance.
@@ -56,17 +94,21 @@ async def search(
 
     await _rate_limit()
 
+    clean_query = query.strip()
+    if "mumbai" not in clean_query.lower():
+        clean_query = f"{clean_query}, Mumbai"
+
     params = {
-        "q": query,
+        "q": clean_query,
         "format": "json",
         "limit": limit,
         "countrycodes": "in",  # restrict to India
         "addressdetails": 1,
     }
+    # Soft bias via viewbox WITHOUT bounded=1 so results anywhere in Mumbai are found
     if bbox:
         south, west, north, east = bbox
         params["viewbox"] = f"{west},{north},{east},{south}"
-        params["bounded"] = 1
 
     headers = {"User-Agent": "QIDRE-SIH2026/1.0 (student-project)"}
 
@@ -80,6 +122,18 @@ async def search(
             resp.raise_for_status()
             data = resp.json()
 
+        # If soft viewbox yielded nothing, retry unconstrained
+        if not data and bbox:
+            params.pop("viewbox", None)
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://nominatim.openstreetmap.org/search",
+                    params=params,
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
         results = [
             {
                 "display_name": item.get("display_name", ""),
@@ -90,12 +144,39 @@ async def search(
             }
             for item in data
         ]
+
+        if not results:
+            # Fallback to local landmark database
+            q_norm = query.lower().replace(", mumbai", "").strip()
+            for key, (f_lat, f_lon) in _MUMBAI_FALLBACK_COORDS.items():
+                if key in q_norm or q_norm in key:
+                    results = [{
+                        "display_name": f"{key.title()}, Mumbai, Maharashtra, India",
+                        "lat": f_lat,
+                        "lon": f_lon,
+                        "type": "city_district",
+                        "importance": 0.8,
+                    }]
+                    logger.info("Local fallback matched '%s' -> (%.4f, %.4f)", query, f_lat, f_lon)
+                    break
+
         _cache[cache_key] = results
         logger.info("Geocode search '%s' → %d results", query, len(results))
         return results
 
     except Exception as e:
-        logger.warning("Geocode search failed for '%s': %s", query, e)
+        logger.warning("Geocode search failed for '%s': %s (checking local fallback)", query, e)
+        q_norm = query.lower().replace(", mumbai", "").strip()
+        for key, (f_lat, f_lon) in _MUMBAI_FALLBACK_COORDS.items():
+            if key in q_norm or q_norm in key:
+                results = [{
+                    "display_name": f"{key.title()}, Mumbai, Maharashtra, India",
+                    "lat": f_lat,
+                    "lon": f_lon,
+                    "type": "city_district",
+                    "importance": 0.8,
+                }]
+                return results
         return []
 
 

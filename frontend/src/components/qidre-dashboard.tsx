@@ -3,14 +3,21 @@ import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   Atom,
   Boxes,
+  Calendar,
+  CheckCircle2,
   ChevronRight,
-  Cloud,
   Clock3,
+  Cloud,
+  CloudRain,
+  Flame,
+  FlaskConical,
   Gauge,
   GitCompareArrows,
+  HeartHandshake,
   Leaf,
   LocateFixed,
   Map,
@@ -18,13 +25,19 @@ import {
   Navigation,
   Network,
   Plus,
-  Route as RouteIcon,
   RefreshCw,
+  RotateCcw,
+  Route as RouteIcon,
   Satellite,
   Settings2,
+  ShieldAlert,
   Sparkles,
+  Sun,
   Trash2,
+  TrendingDown,
+  TrendingUp,
   Truck,
+  Umbrella,
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -43,10 +56,46 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { AREAS, areaMeta, compareRoutes, geocode, jobStreamUrl, loadGraph, refreshLiveTraffic, startRouteJob, type AreaId, type CompareResponse, type TrafficSegment } from "@/lib/api";
+import {
+  AREAS,
+  areaMeta,
+  compareRoutes,
+  fetchCorrectiveTips,
+  fetchDriverWellbeing,
+  fetchEcoMetrics,
+  fetchWeatherFestive,
+  geocode,
+  jobStreamUrl,
+  loadGraph,
+  refreshLiveTraffic,
+  simulateScenario,
+  startRouteJob,
+  takeTipAction,
+  updateWeatherFestive,
+  type AreaId,
+  type CompareResponse,
+  type CorrectiveTip,
+  type SimulationResult,
+  type TrafficSegment,
+  type WeatherFestiveSummary,
+  type WellbeingSummary,
+} from "@/lib/api";
 
-type View = "home" | "compare" | "fleet";
+type View = "home" | "compare" | "fleet" | "simulator" | "operations";
 const MiniChart = lazy(() => import("./mini-chart"));
+
+function findClosestArea(lat: number, lon: number): AreaId {
+  let closest: AreaId = "bkc";
+  let minDist = Infinity;
+  for (const a of AREAS) {
+    const d = Math.hypot(lat - a.center.lat, lon - a.center.lon);
+    if (d < minDist) {
+      minDist = d;
+      closest = a.id as AreaId;
+    }
+  }
+  return closest;
+}
 
 function Logo() {
   return (
@@ -69,6 +118,8 @@ const navigation: Array<{ id: View; label: string; icon: typeof Map }> = [
   { id: "home", label: "Home", icon: Sparkles },
   { id: "compare", label: "Compare Routes", icon: GitCompareArrows },
   { id: "fleet", label: "Fleet Optimizer", icon: Truck },
+  { id: "simulator", label: "Scenario Simulator", icon: FlaskConical },
+  { id: "operations", label: "Weather & Wellbeing", icon: HeartHandshake },
 ];
 
 function TopNav({ view, onChange }: { view: View; onChange: (view: View) => void }) {
@@ -94,7 +145,7 @@ function TopNav({ view, onChange }: { view: View; onChange: (view: View) => void
             >
               <Icon className={cn("size-3.5", active && "text-primary")} />
               <span className="hidden md:inline">{item.label}</span>
-              <span className="md:hidden">{item.id === "compare" ? "Compare" : item.id === "fleet" ? "Fleet" : "Home"}</span>
+              <span className="md:hidden">{item.label.split(" ")[0]}</span>
             </Button>
           );
         })}
@@ -120,71 +171,74 @@ function RouteBackdrop() {
             <stop offset="0" stopColor="var(--primary)" />
             <stop offset="1" stopColor="var(--quantum)" />
           </linearGradient>
-          <filter id="hero-glow"><feGaussianBlur stdDeviation="5" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
         </defs>
-        <path d="M-60 590 C210 520 210 220 510 310 S790 600 1010 400 1210 150 1500 240" fill="none" stroke="url(#hero-route)" strokeWidth="2" strokeDasharray="10 10" filter="url(#hero-glow)" />
-        <path d="M110 40 C240 210 430 115 610 190 S860 360 1100 230 1320 300 1470 490" fill="none" stroke="var(--map-line)" strokeWidth="1" />
-        {[170, 510, 800, 1090, 1290].map((x, i) => <circle key={x} cx={x} cy={[520, 310, 510, 330, 205][i]} r="5" fill="var(--background)" stroke="var(--primary)" strokeWidth="2" />)}
+        <path d="M-40 540 C 260 520, 360 260, 680 290 S 1120 620, 1480 340" fill="none" stroke="url(#hero-route)" strokeWidth="1.5" strokeDasharray="6 8" />
       </svg>
-      <div className="absolute left-[12%] top-[18%] size-32 rounded-full bg-primary/10 blur-3xl" />
-      <div className="absolute bottom-[8%] right-[12%] size-40 rounded-full bg-quantum/10 blur-3xl" />
     </div>
   );
 }
 
 function HomeView({ onChange }: { onChange: (view: View) => void }) {
   return (
-    <section className="relative flex h-full min-h-0 items-center justify-center overflow-hidden px-5 pb-10 text-center">
+    <section className="relative flex h-full flex-col justify-between overflow-y-auto px-6 py-10 sm:px-10 lg:px-16">
       <RouteBackdrop />
-      <div className="relative z-10 mx-auto max-w-5xl animate-enter">
-        <div className="mx-auto mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-primary backdrop-blur-md">
-          <Zap className="size-3.5" /> Quantum-inspired optimization
+      <div className="relative z-10 max-w-4xl space-y-6">
+        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[11px] font-medium text-primary">
+          <Sparkles className="size-3" /> SIH 2026 · Quantum-Inspired Urban Logistics
         </div>
-        <h1 className="font-display text-4xl font-bold leading-[1.02] tracking-normal text-balance sm:text-6xl lg:text-7xl xl:text-[5.5rem]">
-          <span className="text-gradient">Optimize Every Delivery.</span>
-          <br />
-          <span className="text-foreground">Move More with Less.</span>
+        <h1 className="font-display text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl text-foreground">
+          Real-time dynamic fleet routing powered by <span className="text-primary">quantum-inspired metaheuristics</span>.
         </h1>
-        <p className="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-          Localized route and fleet optimization using real-world road networks and quantum-inspired AI.
+        <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
+          QIDRE pairs OpenStreetMap road networks, live TomTom traffic, and thermodynamic vehicle physics with QPSO delta-potential-well sampling to cut transit delay, EV energy burn, and driver strain.
         </p>
-        <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <Button onClick={() => onChange("compare")} size="lg" className="h-12 min-w-52 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">
-            <GitCompareArrows /> Compare Routes <ArrowRight />
+        <div className="flex flex-wrap gap-3 pt-2">
+          <Button onClick={() => onChange("fleet")} size="lg" className="h-11 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">
+            Open Fleet Optimizer <ArrowRight className="size-4" />
           </Button>
-          <Button onClick={() => onChange("fleet")} size="lg" variant="outline" className="h-12 min-w-52 border-quantum/40 bg-quantum/10 text-foreground shadow-neon-violet hover:bg-quantum/20">
-            <Truck className="text-quantum-foreground" /> Launch Fleet Optimizer
+          <Button onClick={() => onChange("compare")} variant="outline" size="lg" className="h-11 border-border bg-card/60 hover:bg-card">
+            Compare Single Routes
+          </Button>
+          <Button onClick={() => onChange("simulator")} variant="outline" size="lg" className="h-11 border-border bg-card/60 hover:bg-card">
+            What-If Simulator
+          </Button>
+          <Button onClick={() => onChange("operations")} variant="outline" size="lg" className="h-11 border-border bg-card/60 hover:bg-card">
+            Weather & Wellbeing
           </Button>
         </div>
-        <div className="mx-auto mt-12 grid max-w-2xl grid-cols-3 divide-x divide-border/70 border-y border-border/60 py-4">
-          {[["Mumbai", "road network"], ["QPSO", "fleet optimizer"], ["Live", "route metrics"]].map(([value, label]) => (
-            <div key={label} className="px-2">
-              <div className="font-mono text-lg font-semibold text-foreground sm:text-2xl">{value}</div>
-              <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:text-xs">{label}</div>
-            </div>
-          ))}
-        </div>
+      </div>
+      <div className="relative z-10 grid gap-4 pt-10 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          { title: "Point-to-Point", desc: "Shortest vs fastest dynamic Dijkstra comparing physical distance against live traffic weights." },
+          { title: "Fleet Engine", desc: "Multi-vehicle capacity-constrained routing solved via QPSO, GA, and Ant Colony Optimization." },
+          { title: "Thermodynamic Physics", desc: "EV kilowatt-hour draw, regenerative descent, and ICE crawl fuel consumption models." },
+          { title: "Driver Ergonomics", desc: "Route strain scoring, unprotected right-turn penalties, and fleet workload equity thresholds." },
+        ].map((feat) => (
+          <Card key={feat.title} className="rounded-md border-border bg-card/60 p-4 backdrop-blur-md">
+            <div className="font-mono text-sm font-semibold text-foreground">{feat.title}</div>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{feat.desc}</p>
+          </Card>
+        ))}
       </div>
     </section>
   );
 }
 
-
-function MapCanvas({ 
-  baseline = true, 
-  optimized = true,
-  showTraffic = true,
+function MapCanvas({
+  baseline,
+  optimized,
+  showTraffic,
   trafficSegments = [],
-  nodes = true, 
-  fleet = false,
-  routeData = null,
+  nodes,
+  fleet,
+  routeData,
   areaId = "bkc",
-}: { 
-  baseline?: boolean; 
+}: {
+  baseline?: boolean;
   optimized?: boolean;
   showTraffic?: boolean;
   trafficSegments?: TrafficSegment[];
-  nodes?: boolean; 
+  nodes?: boolean;
   fleet?: boolean;
   routeData?: any;
   areaId?: AreaId;
@@ -193,23 +247,26 @@ function MapCanvas({
   const map = useRef<MapLibreMap | null>(null);
   const maplibre = useRef<typeof import("maplibre-gl") | null>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [mapError, setMapError] = useState("");
 
   useEffect(() => {
     let disposed = false;
     import("maplibre-gl").then((maplibreModule) => {
       if (disposed || !mapContainer.current) return;
       maplibre.current = maplibreModule;
+      const initialCenter = areaMeta(areaId).center;
       const instance = new maplibreModule.Map({
         container: mapContainer.current,
         style: {
           version: 8,
           sources: {
-            openstreetmap: {
+            carto: {
               type: "raster",
-              tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+              tiles: [
+                "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png",
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+              ],
               tileSize: 256,
-              attribution: "© OpenStreetMap contributors",
+              attribution: "© OpenStreetMap contributors, © CARTO",
             },
             "live-traffic": {
               type: "geojson",
@@ -217,7 +274,7 @@ function MapCanvas({
             },
           },
           layers: [
-            { id: "openstreetmap", type: "raster", source: "openstreetmap" },
+            { id: "carto-tiles", type: "raster", source: "carto" },
             {
               id: "live-traffic",
               type: "line",
@@ -236,16 +293,13 @@ function MapCanvas({
             },
           ],
         },
-        center: [areaMeta("bkc").center.lon, areaMeta("bkc").center.lat],
-        zoom: 11,
+        center: [initialCenter.lon, initialCenter.lat],
+        zoom: 12,
       });
       map.current = instance;
       instance.on("error", (event) => {
-        const message = event.error?.message;
-        if (message) {
-          console.error("Map rendering error", event.error);
-          setMapError("Map tiles could not be loaded. Check your connection and reload.");
-        }
+        // Log silently instead of interrupting user with permanent modal banner
+        console.warn("Map warning:", event.error?.message);
       });
       instance.once("load", () => {
         if (!disposed) {
@@ -253,7 +307,7 @@ function MapCanvas({
           setMapReady(true);
         }
       });
-    }).catch((cause: unknown) => console.error("Could not load the map engine", cause));
+    }).catch((cause: unknown) => console.error("Could not load map engine", cause));
 
     return () => {
       disposed = true;
@@ -265,7 +319,9 @@ function MapCanvas({
 
   useEffect(() => {
     const center = areaMeta(areaId).center;
-    map.current?.setCenter([center.lon, center.lat]);
+    if (map.current) {
+      map.current.flyTo({ center: [center.lon, center.lat], zoom: 12, essential: true });
+    }
   }, [areaId, mapReady]);
 
   useEffect(() => {
@@ -278,115 +334,94 @@ function MapCanvas({
         .map((segment) => ({
           type: "Feature" as const,
           properties: {
-            speed_ratio: segment.free_flow_speed_kmh > 0
-              ? segment.speed_kmh / segment.free_flow_speed_kmh
-              : 1,
+            speed_ratio: segment.free_flow_speed_kmh > 0 ? segment.speed_kmh / segment.free_flow_speed_kmh : 1,
             speed_kmh: segment.speed_kmh,
           },
-          geometry: { type: "LineString" as const, coordinates: segment.geometry },
+          geometry: {
+            type: "LineString" as const,
+            coordinates: segment.geometry.map(([lat, lon]) => [lon, lat]),
+          },
         })),
     });
-    map.current?.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
-  }, [trafficSegments, showTraffic, mapReady]);
+  }, [trafficSegments, mapReady]);
 
   useEffect(() => {
-    const maplibreModule = maplibre.current;
-    if (!map.current || !mapReady || !routeData || !maplibreModule) return;
+    if (!map.current || !mapReady) return;
+    map.current.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
+  }, [showTraffic, mapReady]);
 
-    const sourceId = 'optimized-routes';
-    const features = routeData.routes
-      .filter((route: any) => route.kind === "baseline" ? baseline : route.kind === "fastest_time" ? optimized : true)
-      .map((route: any, idx: number) => {
-        let coordinates = [];
-        if (route.polyline && route.polyline.length > 0) {
-            coordinates = route.polyline.map((coord: any) => [coord[1], coord[0]]); // GeoJSON expects [lon, lat]
-        } else if (route.stops) {
-            coordinates = route.stops.map((stop: any) => [stop.lon, stop.lat]);
-        }
-        return {
-            type: 'Feature',
-            properties: { color: ['#a855f7', '#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#ef4444'][idx % 6] },
-            geometry: {
-                type: 'LineString',
-                coordinates: coordinates
-            }
-        };
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance || !mapReady) return;
+
+    // Clear previous route layers
+    ["route-baseline", "route-optimized", "fleet-layer-0", "fleet-layer-1", "fleet-layer-2", "fleet-layer-3"].forEach((layerId) => {
+      if (instance.getLayer(layerId)) instance.removeLayer(layerId);
+      if (instance.getSource(layerId)) instance.removeSource(layerId);
     });
 
-    if (map.current.getSource(sourceId)) {
-        (map.current.getSource(sourceId) as GeoJSONSource).setData({
-            type: 'FeatureCollection',
-            features: features as any
+    if (routeData?.routes && fleet) {
+      const colors = ["#06b6d4", "#a855f7", "#ec4899", "#f59e0b"];
+      routeData.routes.forEach((r: any, idx: number) => {
+        if (!r.polyline || r.polyline.length < 2) return;
+        const sourceId = `fleet-layer-${idx}`;
+        instance.addSource(sourceId, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "LineString",
+              coordinates: r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]),
+            },
+          },
         });
-    } else {
-        const addLayers = () => {
-            if (!map.current) return;
-            if (map.current.getSource(sourceId)) return;
-            map.current.addSource(sourceId, {
-                type: 'geojson',
-                data: { type: 'FeatureCollection', features: features as any }
-            });
-
-            map.current.addLayer({
-                id: 'routes-layer',
-                type: 'line',
-                source: sourceId,
-                paint: {
-                    'line-color': ['get', 'color'],
-                    'line-width': 4,
-                    'line-opacity': 0.8
-                }
-            });
-            
-            map.current.addLayer({
-                id: 'routes-nodes',
-                type: 'circle',
-                source: sourceId,
-                paint: {
-                    'circle-radius': 5,
-                    'circle-color': '#fff',
-                    'circle-stroke-width': 2,
-                    'circle-stroke-color': ['get', 'color']
-                }
-            });
-        };
-        
-        if (map.current.isStyleLoaded()) {
-            addLayers();
-        } else {
-            map.current.once('load', addLayers);
-        }
-    }
-    
-    if (routeData.routes.length > 0) {
-        const bounds = new maplibreModule.LngLatBounds();
-        routeData.routes.forEach((r: any) => {
-            if (r.polyline && r.polyline.length > 0) {
-                r.polyline.forEach((coord: any) => {
-                    bounds.extend([coord[1], coord[0]]); // [lon, lat]
-                });
-            } else if (r.stops) {
-                r.stops.forEach((stop: any) => {
-                    bounds.extend([stop.lon, stop.lat]);
-                });
-            }
+        instance.addLayer({
+          id: sourceId,
+          type: "line",
+          source: sourceId,
+          paint: {
+            "line-color": colors[idx % colors.length],
+            "line-width": 4,
+            "line-opacity": 0.85,
+          },
         });
-        if (!bounds.isEmpty()) {
-            map.current.fitBounds(bounds, { padding: 50 });
-        }
+      });
+    } else if (routeData?.routes && !fleet) {
+      routeData.routes.forEach((r: any) => {
+        if (!r.polyline || r.polyline.length < 2) return;
+        const isBaseline = r.kind === "baseline";
+        if ((isBaseline && !baseline) || (!isBaseline && !optimized)) return;
+        const sourceId = isBaseline ? "route-baseline" : "route-optimized";
+        instance.addSource(sourceId, {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "LineString",
+              coordinates: r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]),
+            },
+          },
+        });
+        instance.addLayer({
+          id: sourceId,
+          type: "line",
+          source: sourceId,
+          paint: {
+            "line-color": isBaseline ? "#64748b" : "#06b6d4",
+            "line-width": isBaseline ? 3 : 5,
+            "line-opacity": 0.9,
+          },
+        });
+      });
     }
-
-  }, [routeData, baseline, optimized, mapReady]);
+  }, [routeData, baseline, optimized, fleet, mapReady]);
 
   return (
-    <div className="relative h-full min-h-[280px] overflow-hidden rounded-md border border-border bg-map shadow-panel">
-      <div ref={mapContainer} className="map-canvas-container" />
-      {mapError && (
-        <div role="status" className="absolute inset-x-4 bottom-4 z-10 rounded-md border border-warning/30 bg-background/90 px-3 py-2 text-xs text-foreground shadow-panel backdrop-blur">
-          {mapError}
-        </div>
-      )}
-      <div className="absolute left-5 top-5 z-10 flex items-center gap-2 rounded-md border border-border bg-surface/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-md">
+    <div className="relative size-full overflow-hidden rounded-md border border-border bg-card">
+      <div ref={mapContainer} className="size-full" />
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-surface/80 px-2.5 py-1 text-xs font-medium text-foreground backdrop-blur-md">
         <Satellite className="size-3.5 text-primary" /> {areaMeta(areaId).label} network
       </div>
     </div>
@@ -416,7 +451,7 @@ function comparisonPolyline(route: CompareResponse["baseline"]): number[][] {
 }
 
 function CompareView() {
-  const areaId: AreaId = "bkc";
+  const [areaId, setAreaId] = useState<AreaId>("bkc");
   const [source, setSource] = useState("Bandra Kurla Complex, Mumbai");
   const [destination, setDestination] = useState("Santacruz East, Mumbai");
   const [stops, setStops] = useState<string[]>([]);
@@ -426,24 +461,58 @@ function CompareView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const handleAreaChange = (newArea: AreaId) => {
+    setAreaId(newArea);
+    setComparison(null);
+    if (newArea === "borivali") {
+      setSource("Western Edge, Borivali East, Mumbai");
+      setDestination("Malad East, Mumbai");
+    } else if (newArea === "bkc") {
+      setSource("Bandra Kurla Complex, Mumbai");
+      setDestination("Santacruz East, Mumbai");
+    } else if (newArea === "andheri") {
+      setSource("Andheri East, Mumbai");
+      setDestination("Juhu, Mumbai");
+    } else if (newArea === "lower_parel") {
+      setSource("Lower Parel, Mumbai");
+      setDestination("Worli, Mumbai");
+    } else if (newArea === "churchgate") {
+      setSource("Churchgate, Mumbai");
+      setDestination("Colaba, Mumbai");
+    } else if (newArea === "powai") {
+      setSource("IIT Bombay, Powai, Mumbai");
+      setDestination("Vikhroli West, Mumbai");
+    }
+  };
+
   const recalculate = async () => {
     setLoading(true);
     setError("");
     setComparison(null);
     try {
-      await loadGraph(areaId);
       const sourcePoint = await geocode(source, areaId);
-      if (!sourcePoint) throw new Error(`Could not find “${source}” in BKC, Mumbai.`);
+      if (!sourcePoint) throw new Error(`Could not find “${source}”. Please check address or try a nearby landmark.`);
       const destinationPoint = await geocode(destination, areaId);
-      if (!destinationPoint) throw new Error(`Could not find “${destination}” in BKC, Mumbai.`);
+      if (!destinationPoint) throw new Error(`Could not find “${destination}”. Please check address or try a nearby landmark.`);
+
+      // Auto-detect if coordinates match another area better
+      const bestSourceArea = findClosestArea(sourcePoint.lat, sourcePoint.lon);
+      const activeArea = (bestSourceArea !== areaId && Math.hypot(sourcePoint.lat - areaMeta(areaId).center.lat, sourcePoint.lon - areaMeta(areaId).center.lon) > 0.08) ? bestSourceArea : areaId;
+      if (activeArea !== areaId) {
+        setAreaId(activeArea);
+      }
+
+      await loadGraph(activeArea);
+
       const stopPoints: Array<{ lat: number; lon: number }> = [];
       for (const stop of stops.filter((value) => value.trim())) {
-        const point = await geocode(stop, areaId);
-        if (!point) throw new Error(`Could not find “${stop}” in BKC, Mumbai.`);
+        const point = await geocode(stop, activeArea);
+        if (!point) throw new Error(`Could not find “${stop}”. Please check address.`);
         stopPoints.push({ lat: point.lat, lon: point.lon });
       }
+
       const result = await compareRoutes({
-        area: areaId,
+        area: activeArea,
         source: { lat: sourcePoint.lat, lon: sourcePoint.lon },
         destination: { lat: destinationPoint.lat, lon: destinationPoint.lon },
         stops: stopPoints,
@@ -482,9 +551,15 @@ function CompareView() {
         <div className="space-y-5 p-5">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><RouteIcon className="size-4 text-primary" /> Route Setup</div>
-            <p className="mt-1 text-xs text-muted-foreground">Compare shortest distance with fastest graph travel time. The fastest route uses TomTom speeds after a traffic refresh; otherwise it uses OSM estimates.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Compare shortest distance with fastest graph travel time across any Mumbai corridor.</p>
           </div>
           <div className="grid gap-4">
+            <SelectField
+              label="Service Area"
+              value={areaId}
+              onValueChange={(val) => handleAreaChange(val as AreaId)}
+              options={AREAS.map(({ id, label }) => [id, label])}
+            />
             <Field label="Source" icon={LocateFixed} value={source} onChange={setSource} placeholder="Enter pickup point" />
             <Field label="Destination" icon={MapPin} value={destination} onChange={setDestination} placeholder="Enter delivery point" />
             <div className="grid gap-2">
@@ -497,7 +572,9 @@ function CompareView() {
               ))}
               <Button variant="outline" size="sm" disabled={stops.length >= 4} onClick={() => setStops([...stops, ""])} className="border-dashed border-border bg-transparent text-muted-foreground"><Plus /> Add stop</Button>
             </div>
-            <Button onClick={recalculate} disabled={loading} className="h-10 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">{loading ? <><Activity className="animate-spin" /> Looking up routes</> : <><Sparkles /> Recalculate comparison</>}</Button>
+            <Button onClick={recalculate} disabled={loading} className="h-10 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">
+              {loading ? <><Activity className="animate-spin" /> Looking up routes</> : <><Sparkles /> Recalculate comparison</>}
+            </Button>
           </div>
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
           <div className="border-t border-border pt-5">
@@ -542,6 +619,7 @@ function FleetView() {
   const [progress, setProgress] = useState(100);
   const [run, setRun] = useState(0);
   const [routeData, setRouteData] = useState<any>(null);
+  const [ecoMetrics, setEcoMetrics] = useState<any>(null);
   const [error, setError] = useState("");
   const stopCount = stopLocations.length;
   const fleetCount = fleet[0] ?? 1;
@@ -565,12 +643,13 @@ function FleetView() {
       setTrafficRefreshing(false);
     }
   };
+
   const routeStats = routeData ? [
-    { label: "Total Distance", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.distance_km, 0).toFixed(1)} km`, icon: Navigation },
-    { label: "Travel Time", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.travel_time_min, 0).toFixed(0)} min`, icon: Clock3 },
+    { label: "Total Distance", value: `${routeData.routes.reduce((sum: number, route: any) => sum + (route.distance_km || 0), 0).toFixed(1)} km`, icon: Navigation },
+    { label: "Travel Time", value: `${routeData.routes.reduce((sum: number, route: any) => sum + (route.travel_time_min || 0), 0).toFixed(0)} min`, icon: Clock3 },
     { label: "Vehicles Used", value: `${routeData.routes.filter((route: any) => route.stop_count > 0).length}`, icon: Truck },
-    { label: "CO₂ Emissions", value: routeData.emissions ? `${routeData.emissions.total_co2_kg.toFixed(2)} kg` : "—", icon: Leaf },
-    { label: "Solve Time", value: `${routeData.elapsed_s.toFixed(2)} s`, icon: Gauge },
+    { label: "CO₂ Emissions", value: routeData.emissions ? `${routeData.emissions.total_co2_kg?.toFixed(2) ?? "0.00"} kg` : "0.00 kg", icon: Leaf },
+    { label: "Solve Time", value: `${routeData.elapsed_s?.toFixed(2) ?? "0.00"} s`, icon: Gauge },
   ] : [
     { label: "Total Distance", value: "—", icon: Navigation },
     { label: "Travel Time", value: "—", icon: Clock3 },
@@ -579,73 +658,91 @@ function FleetView() {
     { label: "Solve Time", value: "—", icon: Gauge },
   ];
 
-  const optimize = async () => { 
+  const optimize = async () => {
     setRunning(true);
     setProgress(0);
     setRouteData(null);
     setError("");
-    
+
     try {
-        const depot = areaMeta(areaId).center;
-        await loadGraph(areaId);
-        const resolvedStops: Array<{ id: number; lat: number; lon: number; demand: number; service_time_min: number }> = [];
-        for (const [index, location] of stopLocations.entries()) {
-            if (!location.trim()) throw new Error(`Enter a location for stop ${index + 1}.`);
-            const hit = await geocode(location, areaId);
-            if (!hit) throw new Error(`Could not find “${location}” in ${areaMeta(areaId).label}.`);
-            resolvedStops.push({
-            id: index + 1,
-            lat: hit.lat,
-            lon: hit.lon,
-            demand: 1,
-            service_time_min: 15.0
-            });
-            setProgress(Math.round(((index + 1) / stopLocations.length) * 10));
+      let activeArea = areaId;
+      const firstLoc = stopLocations[0]?.trim();
+      if (firstLoc) {
+        const sampleHit = await geocode(firstLoc, areaId);
+        if (sampleHit) {
+          const closest = findClosestArea(sampleHit.lat, sampleHit.lon);
+          const currentCenter = areaMeta(areaId).center;
+          if (closest !== areaId && Math.hypot(sampleHit.lat - currentCenter.lat, sampleHit.lon - currentCenter.lon) > 0.08) {
+            activeArea = closest;
+            setAreaId(activeArea);
+          }
         }
+      }
 
-        const generatedVehicles = Array.from({length: fleetCount}).map((_, i) => ({
-            id: i + 1,
-            capacity: 50,
-            speed_kmh: 40.0,
-            cost_per_km: 15.0,
-            cost_per_hour: 200.0
-        }));
-
-        const { job_id: jobId } = await startRouteJob({
-                depot_lat: depot.lat,
-                depot_lon: depot.lon,
-                stops: resolvedStops,
-                vehicles: generatedVehicles,
-                algorithm,
-                qpso_config: { max_iterations: 50, population_size: 40 }
+      const depot = areaMeta(activeArea).center;
+      await loadGraph(activeArea);
+      const resolvedStops: Array<{ id: number; lat: number; lon: number; demand: number; service_time_min: number }> = [];
+      for (const [index, location] of stopLocations.entries()) {
+        if (!location.trim()) throw new Error(`Enter a location for stop ${index + 1}.`);
+        const hit = await geocode(location, activeArea);
+        if (!hit) throw new Error(`Could not find “${location}”. Please check spelling.`);
+        resolvedStops.push({
+          id: index + 1,
+          lat: hit.lat,
+          lon: hit.lon,
+          demand: 1,
+          service_time_min: 15.0,
         });
-        
-        const eventSource = new EventSource(jobStreamUrl(jobId));
-        eventSource.onmessage = (event) => {
-            const parsed = JSON.parse(event.data);
-            if (typeof parsed.iteration === "number") {
-                setProgress(Math.max(10, Math.floor((parsed.iteration / 50) * 100)));
-            } else if (parsed.status === "failed") {
-                setError(parsed.error ?? "Route optimization failed.");
-                setRunning(false);
-                eventSource.close();
-            } else if (parsed.status === "completed") {
-                setRouteData(parsed.result);
-                setProgress(100);
-                setRunning(false);
-                setRun(r => r + 1);
-                eventSource.close();
-            }
-        };
-        eventSource.onerror = () => {
-            setError("The optimization stream disconnected before finishing.");
-            setRunning(false);
-            eventSource.close();
-        };
-    } catch (e) {
-        console.error(e);
-        setError(e instanceof Error ? e.message : "Could not optimize these locations.");
+        setProgress(Math.round(((index + 1) / stopLocations.length) * 10));
+      }
+
+      const generatedVehicles = Array.from({ length: fleetCount }).map((_, i) => ({
+        id: i + 1,
+        capacity: 50,
+        speed_kmh: 40.0,
+        cost_per_km: 15.0,
+        cost_per_hour: 200.0,
+        is_ev: i % 2 === 0, // Alternate EV and conventional
+        type: i % 2 === 0 ? "ev_van" : "ice_lcv",
+      }));
+
+      const { job_id: jobId } = await startRouteJob({
+        area: activeArea,
+        depot_lat: depot.lat,
+        depot_lon: depot.lon,
+        stops: resolvedStops,
+        vehicles: generatedVehicles,
+        algorithm,
+        qpso_config: { max_iterations: 50, population_size: 40 },
+      });
+
+      const eventSource = new EventSource(jobStreamUrl(jobId));
+      eventSource.onmessage = (event) => {
+        const parsed = JSON.parse(event.data);
+        if (typeof parsed.iteration === "number") {
+          setProgress(Math.max(10, Math.floor((parsed.iteration / 50) * 100)));
+        } else if (parsed.status === "failed") {
+          setError(parsed.error ?? "Route optimization failed.");
+          setRunning(false);
+          eventSource.close();
+        } else if (parsed.status === "completed") {
+          setRouteData(parsed.result);
+          setProgress(100);
+          setRunning(false);
+          setRun((r) => r + 1);
+          eventSource.close();
+          fetchEcoMetrics().then(setEcoMetrics).catch(console.warn);
+        }
+      };
+      eventSource.onerror = () => {
+        setError("Optimization streaming disconnected. Backend solve may still have completed.");
         setRunning(false);
+        eventSource.close();
+      };
+    } catch (e) {
+      console.error(e);
+      setError(e instanceof Error ? e.message : "Could not optimize these locations.");
+      setRunning(false);
     }
   };
 
@@ -672,13 +769,13 @@ function FleetView() {
                   setTrafficError("");
                   setTrafficSegments([]);
                   setAreaId(nextArea);
-                  }} options={AREAS.map(({ id, label }) => [id, label])} />
+                }} options={AREAS.map(({ id, label }) => [id, label])} />
                 <SelectField label="Algorithm" value={algorithm} onValueChange={setAlgorithm} options={[["qpso", "QPSO — Quantum Swarm"], ["ga", "GA — Genetic Algorithm"], ["aco", "ACO — Ant Colony"]]} />
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between text-xs font-medium text-muted-foreground"><span>Delivery Locations</span><span>{stopCount}/15</span></div>
                   {stopLocations.map((location, index) => (
                     <div key={index} className="flex gap-2">
-                      <Input aria-label={`Delivery location ${index + 1}`} value={location} onChange={(event) => setStopLocations(stopLocations.map((item, i) => i === index ? event.target.value : item))} placeholder="Search a Mumbai address" className="h-9 border-border bg-input/40" />
+                      <Input aria-label={`Delivery location ${index + 1}`} value={location} onChange={(event) => setStopLocations(stopLocations.map((item, i) => i === index ? event.target.value : item))} placeholder="Search Mumbai address" className="h-9 border-border bg-input/40" />
                       <Button aria-label={`Remove delivery location ${index + 1}`} title="Remove location" size="icon" variant="ghost" disabled={stopLocations.length === 1} onClick={() => setStopLocations(stopLocations.filter((_, i) => i !== index))} className="shrink-0 text-muted-foreground hover:text-destructive"><Trash2 /></Button>
                     </div>
                   ))}
@@ -697,8 +794,40 @@ function FleetView() {
             </TabsContent>
             <TabsContent value="analytics" className="mt-0 min-h-0 flex-1 overflow-hidden">
               <ScrollArea className="h-full"><div className="space-y-4 p-4">
+                {ecoMetrics && (
+                  <div className="space-y-3">
+                    <div className="rounded-md border border-border/80 bg-muted/30 p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-foreground">Driver Ergonomics & Wellness</span>
+                        <span className={cn("rounded px-2 py-0.5 font-mono text-[10px] font-semibold", ecoMetrics.gini_compliant ? "bg-status/10 text-status" : "bg-destructive/10 text-destructive")}>
+                          {ecoMetrics.gini_compliant ? "Gini Compliant (≤0.15)" : "Equity Warning"}
+                        </span>
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        {ecoMetrics.driver_wellness?.map((dw: any) => (
+                          <div key={dw.driver_index} className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Driver #{dw.driver_index + 1}</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-foreground">{dw.cognitive_stress.toFixed(1)} stress</span>
+                              <span className={cn("rounded px-1.5 py-0.5 text-[9px] uppercase", dw.wellness_level === "optimal" ? "bg-status/10 text-status" : dw.wellness_level === "demanding" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive")}>
+                                {dw.wellness_label}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border/80 bg-muted/30 p-3">
+                      <span className="text-xs font-semibold text-foreground">Thermodynamic Energy Engine</span>
+                      <div className="mt-2 grid grid-cols-2 gap-2 font-mono text-xs">
+                        <div className="rounded bg-background/50 p-2"><div className="text-[10px] text-muted-foreground">Electric Energy</div><div className="text-foreground">{ecoMetrics.fleet_energy_kwh?.toFixed(2) ?? "0.00"} kWh</div></div>
+                        <div className="rounded bg-background/50 p-2"><div className="text-[10px] text-muted-foreground">CO₂ Saved vs ICE</div><div className="text-status">+{ecoMetrics.co2_saved_vs_all_ice_kg?.toFixed(2) ?? "0.00"} kg</div></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <Suspense fallback={<p className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">Loading analytics…</p>}>
-                  {routeData?.convergence?.length ? <MiniChart title="Convergence" subtitle="Best fitness by iteration" data={routeData.convergence.map((value: number, i: number) => ({ i, value }))} dataKey="value" color="var(--primary)" /> : <p className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">Run an optimization to see its convergence data.</p>}
+                  {routeData?.convergence?.length ? <MiniChart title="Convergence" subtitle="Best fitness by iteration" data={routeData.convergence.map((value: number, i: number) => ({ i, value }))} dataKey="value" color="var(--primary)" /> : <p className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">Run an optimization to see convergence data.</p>}
                   {routeData?.diversity?.length ? <MiniChart title="Population Diversity" subtitle="Swarm diversity by iteration" data={routeData.diversity.map((value: number, i: number) => ({ i, value }))} dataKey="value" color="var(--quantum)" /> : null}
                 </Suspense>
               </div></ScrollArea>
@@ -721,6 +850,372 @@ function FleetView() {
           {trafficSegments.length > 0 && <div className="absolute bottom-4 left-4 z-20 rounded-md border border-border bg-surface/85 px-3 py-2 text-[10px] text-muted-foreground shadow-panel backdrop-blur-md">Traffic data © TomTom · Green: flowing · Amber: slow · Red: congested</div>}
           <div className="absolute bottom-4 right-4 z-20 rounded-md border border-border bg-surface/80 px-3 py-2 font-mono text-[10px] text-muted-foreground backdrop-blur-md">RUN #{run || 1} · {running ? `SOLVING ${progress}%` : routeData ? "COMPLETE" : "READY"}</div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function SimulatorView() {
+  const [scenarioId, setScenarioId] = useState("rain_5pm");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<SimulationResult | null>(null);
+  const [tips, setTips] = useState<CorrectiveTip[]>([]);
+  const [appliedTips, setAppliedTips] = useState<string[]>([]);
+
+  useEffect(() => {
+    simulateScenario(scenarioId).then(setResult).catch(console.error);
+    fetchCorrectiveTips().then(setTips).catch(console.error);
+  }, []);
+
+  const handleSimulate = async (id: string) => {
+    setScenarioId(id);
+    setLoading(true);
+    try {
+      const data = await simulateScenario(id);
+      setResult(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTip = async (tipId: string, action: "apply" | "dismiss") => {
+    try {
+      await takeTipAction(tipId, action);
+      if (action === "apply") {
+        setAppliedTips((prev) => [...prev, tipId]);
+      } else {
+        setTips((prev) => prev.filter((t) => t.id !== tipId));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <section className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 lg:p-6">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2 font-display text-xl font-bold text-foreground">
+          <FlaskConical className="size-5 text-primary" /> Scenario Simulator & Corrective Tips (Modules C & D)
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Stress-test proposed routes against sudden monsoon downpours, festival exodus surges, and battery thermal derating.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {[
+          { id: "rain_5pm", label: "Heavy Monsoon at 5 PM", icon: CloudRain },
+          { id: "long_weekend", label: "Long Weekend Outbound", icon: Calendar },
+          { id: "breakdown_2v", label: "Two EV Breakdowns", icon: AlertTriangle },
+          { id: "visarjan_rush", label: "Ganesh Visarjan Rush", icon: Sparkles },
+        ].map((item) => {
+          const Icon = item.icon;
+          const active = scenarioId === item.id;
+          return (
+            <Button
+              key={item.id}
+              size="sm"
+              variant={active ? "default" : "outline"}
+              onClick={() => handleSimulate(item.id)}
+              className={cn("gap-1.5 text-xs", active && "bg-primary text-primary-foreground shadow-neon-cyan")}
+            >
+              <Icon className="size-3.5" />
+              {item.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      {result && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card className="rounded-md border-border bg-card/70 p-4 shadow-panel backdrop-blur-md lg:col-span-2">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div>
+                <h3 className="font-semibold text-foreground">{result.scenario.title}</h3>
+                <p className="text-xs text-muted-foreground">{result.scenario.description}</p>
+              </div>
+              <span className="rounded bg-primary/10 px-2.5 py-1 font-mono text-xs font-semibold text-primary">
+                P90 Band: {result.simulated.p90_duration_range || "—"}
+              </span>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <span className="text-[10px] uppercase text-muted-foreground">On-Time Delivery</span>
+                <div className="mt-1 font-mono text-xl font-bold text-foreground">{result.simulated.on_time_pct}%</div>
+                <div className="mt-1 flex items-center text-[10px] text-destructive">
+                  <TrendingDown className="mr-0.5 size-3" /> -{result.deltas.on_time_drop_pct}% vs baseline
+                </div>
+              </div>
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <span className="text-[10px] uppercase text-muted-foreground">Transit Duration</span>
+                <div className="mt-1 font-mono text-xl font-bold text-foreground">{result.simulated.total_travel_time_min}m</div>
+                <div className="mt-1 flex items-center text-[10px] text-warning">
+                  <TrendingUp className="mr-0.5 size-3" /> +{result.deltas.travel_time_min}m slowdown
+                </div>
+              </div>
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <span className="text-[10px] uppercase text-muted-foreground">Operating Cost</span>
+                <div className="mt-1 font-mono text-xl font-bold text-foreground">₹{result.simulated.total_cost_inr}</div>
+                <div className="mt-1 flex items-center text-[10px] text-destructive">
+                  <TrendingUp className="mr-0.5 size-3" /> +₹{result.deltas.cost_inr} fuel/delay
+                </div>
+              </div>
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <span className="text-[10px] uppercase text-muted-foreground">Peak Driver Strain</span>
+                <div className="mt-1 font-mono text-xl font-bold text-destructive">{result.simulated.peak_driver_strain}</div>
+                <div className="mt-1 text-[10px] text-destructive">Burnout Band (Red)</div>
+              </div>
+            </div>
+
+            <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+              <span className="font-semibold text-primary">Simulated Mitigation Strategy: </span>
+              <span className="text-muted-foreground">{result.recommended_mitigation}</span>
+            </div>
+          </Card>
+
+          <Card className="rounded-md border-border bg-card/70 p-4 shadow-panel backdrop-blur-md">
+            <div className="flex items-center gap-2 font-semibold text-foreground">
+              <ShieldAlert className="size-4 text-warning" /> Corrective Action Tips (Ranked)
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">Maximum 3 explainable advice cards generated by rule engine.</p>
+
+            <div className="mt-4 space-y-3">
+              {tips.map((tip) => {
+                const applied = appliedTips.includes(tip.id);
+                return (
+                  <div key={tip.id} className={cn("rounded-md border p-3 text-xs transition-colors", applied ? "border-status/40 bg-status/5" : "border-border bg-muted/30")}>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-foreground">{tip.title}</span>
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-primary">
+                        {tip.confidence_pct}% conf
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{tip.action}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5 font-mono text-[10px]">
+                      <span className="rounded bg-status/10 px-1.5 py-0.5 text-status">-{tip.benefits.time_saved_min}m</span>
+                      <span className="rounded bg-status/10 px-1.5 py-0.5 text-status">₹{tip.benefits.cost_saved_inr} saved</span>
+                      <span className="rounded bg-quantum/10 px-1.5 py-0.5 text-quantum">-{tip.benefits.strain_reduction} WSI</span>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      {applied ? (
+                        <div className="flex items-center gap-1 font-semibold text-status"><CheckCircle2 className="size-3.5" /> Applied to Fleet</div>
+                      ) : (
+                        <>
+                          <Button size="sm" onClick={() => handleTip(tip.id, "apply")} className="h-7 bg-primary px-3 text-[11px] text-primary-foreground">Apply</Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleTip(tip.id, "dismiss")} className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive">Dismiss</Button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OperationsView() {
+  const [data, setData] = useState<WeatherFestiveSummary | null>(null);
+  const [wellbeing, setWellbeing] = useState<WellbeingSummary | null>(null);
+  const [updating, setUpdating] = useState(false);
+
+  const loadData = () => {
+    fetchWeatherFestive().then(setData).catch(console.error);
+    fetchDriverWellbeing().then(setWellbeing).catch(console.error);
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const handleWeatherChange = async (condition: string) => {
+    setUpdating(true);
+    try {
+      const updated = await updateWeatherFestive({
+        condition,
+        rainfall_mm_hr: condition === "Heavy Monsoon" ? 50.0 : condition === "Light Rain" ? 15.0 : 0.0,
+        waterlogging_risk: condition === "Heavy Monsoon" ? "High" : "Low",
+      });
+      setData(updated);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleFestiveChange = async (festive_mode: string) => {
+    setUpdating(true);
+    try {
+      const updated = await updateWeatherFestive({ festive_mode });
+      setData(updated);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  return (
+    <section className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto p-4 lg:p-6">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2 font-display text-xl font-bold text-foreground">
+          <HeartHandshake className="size-5 text-primary" /> Weather, Festive & Driver Wellbeing (Modules A & B)
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Calibrated Mumbai environmental impact modeling paired with humane driver Workload Strain Index (WSI) monitoring.
+        </p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="rounded-md border-border bg-card/70 p-4 shadow-panel backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-border pb-3">
+            <div className="flex items-center gap-2 font-semibold text-foreground">
+              <CloudRain className="size-4 text-primary" /> Module A: Weather & Festive Delay Engine
+            </div>
+            {data && (
+              <span className="rounded bg-primary/10 px-2 py-0.5 font-mono text-xs text-primary">
+                Demand: ×{data.system_impact.fleet_demand_surge}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-4">
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">Weather Scenario Preset</span>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {[
+                  { name: "Clear", icon: Sun },
+                  { name: "Light Rain", icon: Umbrella },
+                  { name: "Heavy Monsoon", icon: CloudRain },
+                  { name: "Heatwave", icon: Flame },
+                ].map((w) => {
+                  const Icon = w.icon;
+                  const active = data?.weather.condition === w.name;
+                  return (
+                    <Button
+                      key={w.name}
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      disabled={updating}
+                      onClick={() => handleWeatherChange(w.name)}
+                      className={cn("gap-1 text-xs", active && "bg-primary text-primary-foreground")}
+                    >
+                      <Icon className="size-3.5" /> {w.name}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <span className="text-xs font-medium text-muted-foreground">Festive / Holiday Calendar</span>
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {["Normal Weekday", "Long Weekend", "Ganesh Visarjan", "Diwali Peak"].map((mode) => {
+                  const active = data?.festive.mode === mode;
+                  return (
+                    <Button
+                      key={mode}
+                      size="sm"
+                      variant={active ? "default" : "outline"}
+                      disabled={updating}
+                      onClick={() => handleFestiveChange(mode)}
+                      className={cn("text-xs", active && "bg-primary text-primary-foreground")}
+                    >
+                      {mode}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border bg-muted/40 p-3">
+              <span className="text-xs font-semibold text-foreground">Mumbai Zone Delay Multipliers</span>
+              <div className="mt-2 space-y-2">
+                {data && Object.entries(data.zones).map(([zid, zone]) => (
+                  <div key={zid} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-foreground">{zone.name}</span>
+                      <span className="text-[10px] text-muted-foreground">({zone.flood_risk})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-foreground">×{zone.delay_multiplier} delay</span>
+                      <span className={cn("rounded px-1.5 py-0.5 text-[9px] uppercase", zone.status === "Normal" ? "bg-status/10 text-status" : zone.status === "Moderate" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive")}>
+                        {zone.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="rounded-md border-border bg-card/70 p-4 shadow-panel backdrop-blur-md">
+          <div className="flex items-center justify-between border-b border-border pb-3">
+            <div className="flex items-center gap-2 font-semibold text-foreground">
+              <Activity className="size-4 text-primary" /> Module B: Driver Workload Strain Index (WSI)
+            </div>
+            {wellbeing && (
+              <span className={cn("rounded px-2 py-0.5 font-mono text-xs font-semibold", wellbeing.gini_compliant ? "bg-status/10 text-status" : "bg-destructive/10 text-destructive")}>
+                Gini: {wellbeing.gini_coefficient} (Compliant)
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded bg-status/10 p-2.5">
+                <div className="font-mono text-lg font-bold text-status">{wellbeing?.optimal_count ?? 0}</div>
+                <div className="text-[10px] text-muted-foreground">Optimal (&lt;40)</div>
+              </div>
+              <div className="rounded bg-warning/10 p-2.5">
+                <div className="font-mono text-lg font-bold text-warning">{wellbeing?.demanding_count ?? 0}</div>
+                <div className="text-[10px] text-muted-foreground">Demanding (40–70)</div>
+              </div>
+              <div className="rounded bg-destructive/10 p-2.5">
+                <div className="font-mono text-lg font-bold text-destructive">{wellbeing?.burnout_risk_count ?? 0}</div>
+                <div className="text-[10px] text-muted-foreground">Burnout Risk (&gt;70)</div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {wellbeing?.drivers.map((driver) => (
+                <div key={driver.id} className="rounded-md border border-border bg-muted/30 p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-foreground">{driver.name}</span>
+                      <span className="ml-2 font-mono text-[11px] text-muted-foreground">({driver.vehicle})</span>
+                    </div>
+                    <span className={cn("rounded px-2 py-0.5 font-mono text-xs font-semibold", driver.band === "green" ? "bg-status/10 text-status" : driver.band === "amber" ? "bg-warning/10 text-warning" : "bg-destructive/10 text-destructive")}>
+                      WSI {driver.wsi_score} · {driver.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className={cn("h-full transition-all duration-500", driver.band === "green" ? "bg-status" : driver.band === "amber" ? "bg-warning" : "bg-destructive")}
+                      style={{ width: `${Math.min(100, driver.wsi_score)}%` }}
+                    />
+                  </div>
+
+                  <div className="mt-2 flex justify-between text-[11px] text-muted-foreground">
+                    <span>Driving: {driver.driving_hr}h</span>
+                    <span>Max stretch: {driver.longest_stretch_min}m</span>
+                    <span>Break deficit: {driver.break_deficit_min}m</span>
+                    <span>Stops: {driver.stops}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              ⚖️ DPDP Act 2023 Notice: WSI is an algorithmic route planning safeguard. Data is strictly used for route balancing, never for individual driver penalization.
+            </p>
+          </div>
+        </Card>
       </div>
     </section>
   );
@@ -752,7 +1247,16 @@ function MapSwitch({ icon: Icon, label, checked, onCheckedChange }: { icon: type
 
 export function QidreDashboard() {
   const [view, setView] = useState<View>("home");
-  const activeView = useMemo(() => ({ home: <HomeView onChange={setView} />, compare: <CompareView />, fleet: <FleetView /> })[view], [view]);
+  const activeView = useMemo(
+    () => ({
+      home: <HomeView onChange={setView} />,
+      compare: <CompareView />,
+      fleet: <FleetView />,
+      simulator: <SimulatorView />,
+      operations: <OperationsView />,
+    })[view],
+    [view]
+  );
 
   return (
     <TooltipProvider>

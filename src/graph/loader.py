@@ -262,6 +262,11 @@ AREAS = {
         "center": (19.1176, 72.9060),
         "radius_m": 5000,
     },
+    "borivali": {
+        "name": "Borivali, Mumbai",
+        "center": (19.2288, 72.8569),
+        "radius_m": 5000,
+    },
 }
 
 
