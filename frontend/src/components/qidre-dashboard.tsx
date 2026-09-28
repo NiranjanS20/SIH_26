@@ -569,23 +569,27 @@ function MapCanvas({
         const el = document.createElement("div");
         el.className = "qidre-marker";
         if (pt.type === "depot") {
+          el.title = "Central Depot (Dispatch Hub)";
           el.innerHTML = `
-            <div style="background: #10b981; color: white; padding: 3px 8px; border-radius: 9999px; font-weight: 700; font-size: 10px; letter-spacing: 0.05em; box-shadow: 0 0 14px rgba(16,185,129,0.7); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+            <div style="background: #10b981; color: white; padding: 4px 10px; border-radius: 9999px; font-weight: 700; font-size: 11px; letter-spacing: 0.05em; box-shadow: 0 0 16px rgba(16,185,129,0.8); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer; transform: scale(1); transition: transform 0.2s;" onmouseenter="this.style.transform='scale(1.1)'" onmouseleave="this.style.transform='scale(1)'">
               <span>🏭 DEPOT</span>
             </div>`;
         } else if (pt.type === "source") {
+          el.title = "Origin / Pickup Point (A)";
           el.innerHTML = `
-            <div style="background: #10b981; color: white; width: 26px; height: 26px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px rgba(16,185,129,0.7); border: 2px solid white; cursor: pointer;">
+            <div style="background: #10b981; color: white; width: 28px; height: 28px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 16px rgba(16,185,129,0.8); border: 2px solid white; cursor: pointer; transform: scale(1); transition: transform 0.2s;" onmouseenter="this.style.transform='scale(1.15)'" onmouseleave="this.style.transform='scale(1)'">
               A
             </div>`;
         } else if (pt.type === "destination") {
+          el.title = "Destination / Dropoff Point (B)";
           el.innerHTML = `
-            <div style="background: #f43f5e; color: white; width: 26px; height: 26px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px rgba(244,63,94,0.7); border: 2px solid white; cursor: pointer;">
+            <div style="background: #f43f5e; color: white; width: 28px; height: 28px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 16px rgba(244,63,94,0.8); border: 2px solid white; cursor: pointer; transform: scale(1); transition: transform 0.2s;" onmouseenter="this.style.transform='scale(1.15)'" onmouseleave="this.style.transform='scale(1)'">
               B
             </div>`;
         } else {
+          el.title = `Delivery Stop #${pt.label || ""}`;
           el.innerHTML = `
-            <div style="background: #0ea5e9; color: white; width: 24px; height: 24px; border-radius: 50%; font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px rgba(14,165,233,0.6); border: 2px solid white; cursor: pointer;">
+            <div style="background: #0ea5e9; color: white; width: 26px; height: 26px; border-radius: 50%; font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px rgba(14,165,233,0.7); border: 2px solid white; cursor: pointer; transform: scale(1); transition: transform 0.2s;" onmouseenter="this.style.transform='scale(1.15)'" onmouseleave="this.style.transform='scale(1)'">
               ${pt.label || "•"}
             </div>`;
         }
