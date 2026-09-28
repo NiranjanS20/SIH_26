@@ -332,3 +332,25 @@ export function fetchEcoMetrics() {
   return jsonFetch<Record<string, any>>("/fleet/eco-metrics");
 }
 
+let _clientTomTomKey = (import.meta.env["VITE_TOMTOM_API_KEY"] as string | undefined) ?? "";
+
+export async function fetchClientConfig(): Promise<{ tomtom_configured?: boolean; tomtom_api_key?: string }> {
+  try {
+    const res = await jsonFetch<{ tomtom_configured?: boolean; tomtom_api_key?: string }>("/config");
+    if (res.tomtom_api_key) {
+      _clientTomTomKey = res.tomtom_api_key;
+    }
+    return res;
+  } catch {
+    return { tomtom_configured: Boolean(_clientTomTomKey), tomtom_api_key: _clientTomTomKey };
+  }
+}
+
+export function getTomTomKey(): string {
+  return _clientTomTomKey || ((import.meta.env["VITE_TOMTOM_API_KEY"] as string | undefined) ?? "");
+}
+
+export function setTomTomKey(key: string): void {
+  _clientTomTomKey = key;
+}
+

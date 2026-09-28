@@ -384,6 +384,7 @@ def _routes_to_response(routes, problem, elapsed_s, algo, fitness_hist, div_hist
 
 @app.get("/health", tags=["system"])
 async def health():
+    tomtom_key = os.getenv("TOMTOM_API_KEY", "") or os.getenv("VITE_TOMTOM_API_KEY", "")
     return {
         "service": "QIDRE",
         "version": "1.1.0",
@@ -391,6 +392,18 @@ async def health():
         "graph_loaded": _state.graph is not None,
         "area": _state.area_key,
         "areas_available": list(AREAS.keys()),
+        "tomtom_configured": bool(tomtom_key),
+        "tomtom_api_key": tomtom_key,
+    }
+
+
+@app.get("/config", tags=["system"])
+async def client_config():
+    """Return public client configuration including map and traffic keys."""
+    tomtom_key = os.getenv("TOMTOM_API_KEY", "") or os.getenv("VITE_TOMTOM_API_KEY", "")
+    return {
+        "tomtom_configured": bool(tomtom_key),
+        "tomtom_api_key": tomtom_key,
     }
 
 

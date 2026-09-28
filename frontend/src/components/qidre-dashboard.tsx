@@ -60,11 +60,13 @@ import {
   AREAS,
   areaMeta,
   compareRoutes,
+  fetchClientConfig,
   fetchCorrectiveTips,
   fetchDriverWellbeing,
   fetchEcoMetrics,
   fetchWeatherFestive,
   geocode,
+  getTomTomKey,
   jobStreamUrl,
   loadGraph,
   refreshLiveTraffic,
@@ -282,14 +284,37 @@ function MapCanvas({
   const map = useRef<MapLibreMap | null>(null);
   const maplibre = useRef<typeof import("maplibre-gl") | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [tomtomKey, setTomtomKey] = useState<string>(() => getTomTomKey());
   const markersRef = useRef<any[]>([]);
   const drawnLayersRef = useRef<string[]>([]);
   const drawnSourcesRef = useRef<string[]>([]);
 
-  const getTileUrl = (th: "dark" | "light") =>
-    th === "dark"
-      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+  useEffect(() => {
+    fetchClientConfig()
+      .then((cfg) => {
+        if (cfg.tomtom_api_key && cfg.tomtom_api_key !== tomtomKey) {
+          setTomtomKey(cfg.tomtom_api_key);
+        }
+      })
+      .catch(console.warn);
+  }, [tomtomKey]);
+
+  const getTileUrl = (th: "dark" | "light", key: string) => {
+    if (key) {
+      return th === "dark"
+        ? `https://api.tomtom.com/map/1/tile/basic/night/{z}/{x}/{y}.png?key=${key}`
+        : `https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=${key}`;
+    }
+    // High-detail fallback with full road labels, landmarks, and street grid
+    return th === "dark"
+      ? "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
       : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+  };
+
+  const getAttribution = (key: string) =>
+    key
+      ? "© OpenStreetMap contributors, © TomTom"
+      : "© OpenStreetMap contributors, © CARTO";
 
   useEffect(() => {
     let disposed = false;
@@ -297,43 +322,64 @@ function MapCanvas({
       if (disposed || !mapContainer.current) return;
       maplibre.current = maplibreModule;
       const initialCenter = areaMeta(areaId).center;
-      const initialTile = getTileUrl(theme);
+      const initialTile = getTileUrl(theme, tomtomKey);
+      const attribution = getAttribution(tomtomKey);
+
+      const sources: Record<string, any> = {
+        "basemap-tiles": {
+          type: "raster",
+          tiles: [initialTile],
+          tileSize: 256,
+          attribution,
+        },
+        "live-traffic": {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        },
+      };
+
+      const layers: any[] = [
+        { id: "basemap-layer", type: "raster", source: "basemap-tiles" },
+      ];
+
+      if (tomtomKey) {
+        sources["tomtom-traffic"] = {
+          type: "raster",
+          tiles: [`https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=${tomtomKey}`],
+          tileSize: 256,
+        };
+        layers.push({
+          id: "tomtom-traffic",
+          type: "raster",
+          source: "tomtom-traffic",
+          layout: { visibility: showTraffic ? "visible" : "none" },
+          paint: { "raster-opacity": 0.8 },
+        });
+      }
+
+      layers.push({
+        id: "live-traffic",
+        type: "line",
+        source: "live-traffic",
+        layout: { "line-cap": "round", "line-join": "round", visibility: showTraffic ? "visible" : "none" },
+        paint: {
+          "line-color": [
+            "case",
+            ["<", ["get", "speed_ratio"], 0.45], "#ef4444",
+            ["<", ["get", "speed_ratio"], 0.75], "#f59e0b",
+            "#22c55e",
+          ],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 6],
+          "line-opacity": 0.9,
+        },
+      });
 
       const instance = new maplibreModule.Map({
         container: mapContainer.current,
         style: {
           version: 8,
-          sources: {
-            "basemap-tiles": {
-              type: "raster",
-              tiles: [initialTile],
-              tileSize: 256,
-              attribution: "© OpenStreetMap contributors, © Esri",
-            },
-            "live-traffic": {
-              type: "geojson",
-              data: { type: "FeatureCollection", features: [] },
-            },
-          },
-          layers: [
-            { id: "basemap-layer", type: "raster", source: "basemap-tiles" },
-            {
-              id: "live-traffic",
-              type: "line",
-              source: "live-traffic",
-              layout: { "line-cap": "round", "line-join": "round", visibility: showTraffic ? "visible" : "none" },
-              paint: {
-                "line-color": [
-                  "case",
-                  ["<", ["get", "speed_ratio"], 0.45], "#ef4444",
-                  ["<", ["get", "speed_ratio"], 0.75], "#f59e0b",
-                  "#22c55e",
-                ],
-                "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 6],
-                "line-opacity": 0.9,
-              },
-            },
-          ],
+          sources,
+          layers,
         },
         center: [initialCenter.lon, initialCenter.lat],
         zoom: 12,
@@ -362,11 +408,11 @@ function MapCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update basemap when theme changes
+  // Update basemap when theme or tomtomKey changes
   useEffect(() => {
     const instance = map.current;
     if (!instance || !mapReady) return;
-    const tileUrl = getTileUrl(theme);
+    const tileUrl = getTileUrl(theme, tomtomKey);
     const source = instance.getSource("basemap-tiles") as any;
     if (source && typeof source.setTiles === "function") {
       source.setTiles([tileUrl]);
@@ -378,17 +424,20 @@ function MapCanvas({
           type: "raster",
           tiles: [tileUrl],
           tileSize: 256,
-          attribution: "© OpenStreetMap contributors, © Esri",
+          attribution: getAttribution(tomtomKey),
         });
+        const beforeLayer = instance.getLayer("tomtom-traffic")
+          ? "tomtom-traffic"
+          : (instance.getLayer("live-traffic") ? "live-traffic" : undefined);
         instance.addLayer(
           { id: "basemap-layer", type: "raster", source: "basemap-tiles" },
-          instance.getLayer("live-traffic") ? "live-traffic" : undefined,
+          beforeLayer,
         );
       } catch (err) {
         console.warn("Could not reload basemap tile source:", err);
       }
     }
-  }, [theme, mapReady]);
+  }, [theme, tomtomKey, mapReady]);
 
   // Center on area change
   useEffect(() => {
@@ -422,7 +471,12 @@ function MapCanvas({
 
   useEffect(() => {
     if (!map.current || !mapReady) return;
-    map.current.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
+    if (map.current.getLayer("live-traffic")) {
+      map.current.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
+    }
+    if (map.current.getLayer("tomtom-traffic")) {
+      map.current.setLayoutProperty("tomtom-traffic", "visibility", showTraffic ? "visible" : "none");
+    }
   }, [showTraffic, mapReady]);
 
   // Route & Markers rendering
@@ -616,8 +670,13 @@ function MapCanvas({
   return (
     <div className="relative size-full overflow-hidden rounded-md border border-border bg-card">
       <div ref={mapContainer} className="size-full" />
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-surface/80 px-2.5 py-1 text-xs font-medium text-foreground backdrop-blur-md">
-        <Satellite className="size-3.5 text-primary" /> {areaMeta(areaId).label} network
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-md border border-border bg-surface/85 px-2.5 py-1 text-xs font-medium text-foreground shadow-panel backdrop-blur-md">
+        <Satellite className="size-3.5 text-primary" /> {areaMeta(areaId).label}
+        <span className="mx-1 h-3 w-px bg-border" />
+        <span className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+          <span className={cn("size-2 rounded-full", tomtomKey ? "bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" : "bg-cyan-400")} />
+          {tomtomKey ? "TomTom HD Maps" : "CARTO Detailed"}
+        </span>
       </div>
     </div>
   );
