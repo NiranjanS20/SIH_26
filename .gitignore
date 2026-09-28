@@ -25,3 +25,7 @@ dist-ssr/
 qidre-source/
 qidre-source.md
 *.tmp
+
+# Secret and unrequired files
+.agents/mcp_config.json
+test_stitch.py
