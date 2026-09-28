@@ -530,8 +530,8 @@ export default function QidreResearchDashboardQpsoInternals({ navigate }: { navi
   function exportLatexReport() {
     const latexSnippet = \`\\section{Quantum-Behaved Particle Swarm Optimization (QPSO) Convergence}
 \\textbf{Run ID:} QPSO-92841 \\quad \\textbf{Seed:} 0x9F4C2 \\\\
-\\textbf{Hamiltonian Formulation:} \$\\hat{H} = -\\frac{\\hbar^2}{2m}\\nabla^2 + V(x)\$ with delta-potential well center \$p_i\$. \\\\
-\\textbf{Observed Metric:} Final \$J = 128.411\$, Diversity \$S(t) = 0.384\$, \$\\gamma = 0.184\$.\`;
+\\textbf{Hamiltonian Formulation:} $\\hat{H} = -\\frac{\\hbar^2}{2m}\\nabla^2 + V(x)$ with delta-potential well center $p_i$. \\\\
+\\textbf{Observed Metric:} Final $J = 128.411$, Diversity $S(t) = 0.384$, $\\gamma = 0.184$.\`;
     const blob = new Blob([latexSnippet], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

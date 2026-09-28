@@ -27,7 +27,6 @@ import {
   Network,
   Plus,
   RefreshCw,
-  RotateCcw,
   Route as RouteIcon,
   Satellite,
   Settings2,
@@ -263,7 +262,7 @@ function MapCanvas({
   optimized,
   showTraffic,
   trafficSegments = [],
-  nodes,
+  nodes: _nodes,
   fleet,
   routeData,
   areaId = "bkc",
@@ -360,6 +359,7 @@ function MapCanvas({
       map.current = null;
       maplibre.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update basemap when theme changes
@@ -414,7 +414,7 @@ function MapCanvas({
           },
           geometry: {
             type: "LineString" as const,
-            coordinates: segment.geometry.map(([lat, lon]) => [lon, lat]),
+            coordinates: segment.geometry.map((pt) => [pt[1] ?? 0, pt[0] ?? 0]),
           },
         })),
     });
@@ -464,7 +464,7 @@ function MapCanvas({
         const sourceId = `fleet-source-${idx}`;
         const layerGlowId = `fleet-glow-${idx}`;
         const layerCoreId = `fleet-core-${idx}`;
-        const color = colors[idx % colors.length];
+        const color = colors[idx % colors.length] ?? "#06b6d4";
 
         instance.addSource(sourceId, {
           type: "geojson",
@@ -1046,7 +1046,16 @@ function FleetView({ theme = "dark" }: { theme?: "dark" | "light" }) {
           </Tabs>
         </Card>
         <div className="relative min-h-[300px] min-w-0">
-          <MapCanvas baseline={false} showTraffic={trafficVisible} trafficSegments={trafficSegments} nodes={nodes} fleet routeData={routeData} areaId={areaId} theme={theme} />
+          <MapCanvas
+            baseline={false}
+            showTraffic={trafficVisible}
+            trafficSegments={trafficSegments}
+            nodes={nodes}
+            fleet
+            routeData={routeData ?? (fleetPoints.length > 0 ? { points: fleetPoints } : null)}
+            areaId={areaId}
+            theme={theme}
+          />
           <div className="absolute right-3 top-3 z-20 w-48 rounded-md border border-border bg-surface/80 p-3 shadow-panel backdrop-blur-md sm:right-4 sm:top-4">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"><Network className="size-3.5 text-primary" /> Map layers</div>
             <Button type="button" size="sm" variant="outline" onClick={refreshTraffic} disabled={trafficRefreshing} className="w-full justify-start border-border bg-transparent text-xs">
@@ -1076,6 +1085,7 @@ function SimulatorView() {
   useEffect(() => {
     simulateScenario(scenarioId).then(setResult).catch(console.error);
     fetchCorrectiveTips().then(setTips).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSimulate = async (id: string) => {
@@ -1129,10 +1139,11 @@ function SimulatorView() {
               key={item.id}
               size="sm"
               variant={active ? "default" : "outline"}
+              disabled={loading}
               onClick={() => handleSimulate(item.id)}
               className={cn("gap-1.5 text-xs", active && "bg-primary text-primary-foreground shadow-neon-cyan")}
             >
-              <Icon className="size-3.5" />
+              {active && loading ? <RefreshCw className="size-3.5 animate-spin" /> : <Icon className="size-3.5" />}
               {item.label}
             </Button>
           );

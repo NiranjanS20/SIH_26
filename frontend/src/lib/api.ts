@@ -86,6 +86,8 @@ export type TrafficRefreshResponse = {
   }>;
 };
 
+export type TrafficSegment = TrafficRefreshResponse["edges"][number];
+
 export function refreshLiveTraffic(maxSegments = 20) {
   return jsonFetch<TrafficRefreshResponse>("/graph/traffic/refresh", {
     method: "POST",
