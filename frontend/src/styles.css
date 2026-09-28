@@ -210,3 +210,12 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
 }
+
+/* MapLibre's unlayered .maplibregl-map rule otherwise overrides Tailwind's
+   positioned container utility and leaves the map with a zero-height box. */
+.maplibregl-map.map-canvas-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}

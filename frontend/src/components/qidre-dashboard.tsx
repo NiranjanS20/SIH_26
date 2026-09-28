@@ -190,6 +190,7 @@ function MapCanvas({
   const map = useRef<MapLibreMap | null>(null);
   const maplibre = useRef<typeof import("maplibre-gl") | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState("");
 
   useEffect(() => {
     let disposed = false;
@@ -198,13 +199,34 @@ function MapCanvas({
       maplibre.current = maplibreModule;
       const instance = new maplibreModule.Map({
         container: mapContainer.current,
-        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        style: {
+          version: 8,
+          sources: {
+            openstreetmap: {
+              type: "raster",
+              tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+              tileSize: 256,
+              attribution: "© OpenStreetMap contributors",
+            },
+          },
+          layers: [{ id: "openstreetmap", type: "raster", source: "openstreetmap" }],
+        },
         center: [areaMeta("bkc").center.lon, areaMeta("bkc").center.lat],
-        zoom: 11
+        zoom: 11,
       });
       map.current = instance;
+      instance.on("error", (event) => {
+        const message = event.error?.message;
+        if (message) {
+          console.error("Map rendering error", event.error);
+          setMapError("Map tiles could not be loaded. Check your connection and reload.");
+        }
+      });
       instance.once("load", () => {
-        if (!disposed) setMapReady(true);
+        if (!disposed) {
+          instance.resize();
+          setMapReady(true);
+        }
       });
     }).catch((cause: unknown) => console.error("Could not load the map engine", cause));
 
@@ -213,7 +235,6 @@ function MapCanvas({
       map.current?.remove();
       map.current = null;
       maplibre.current = null;
-      setMapReady(false);
     };
   }, []);
 
@@ -313,7 +334,12 @@ function MapCanvas({
 
   return (
     <div className="relative h-full min-h-[280px] overflow-hidden rounded-md border border-border bg-map shadow-panel">
-      <div ref={mapContainer} className="absolute inset-0" />
+      <div ref={mapContainer} className="map-canvas-container" />
+      {mapError && (
+        <div role="status" className="absolute inset-x-4 bottom-4 z-10 rounded-md border border-warning/30 bg-background/90 px-3 py-2 text-xs text-foreground shadow-panel backdrop-blur">
+          {mapError}
+        </div>
+      )}
       <div className="absolute left-5 top-5 z-10 flex items-center gap-2 rounded-md border border-border bg-surface/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-md">
         <Satellite className="size-3.5 text-primary" /> {areaMeta(areaId).label} network
       </div>
