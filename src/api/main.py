@@ -48,7 +48,11 @@ from src.oracle.matrix import build_matrix
 from src.optimizer.encoding import Stop, Vehicle, VRPProblem
 from src.optimizer.fitness import FitnessEvaluator, FitnessWeights
 from src.optimizer.qpso import QPSOSolver, QPSOConfig
-from src.sustainability.emissions import compute_fleet_emissions
+from src.optimizer.turn_analyzer import TurnAnalyzer
+from src.sustainability.emissions import (
+    FleetEnergyEngine,
+    compute_fleet_emissions,
+)
 from src.api.jobs import create_job, update_job_progress, complete_job, fail_job, stream_job
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
@@ -146,9 +150,11 @@ class RouteCompareRequest(BaseModel):
     stops: List[PointModel] = Field(default_factory=list)
 
 class WeightsModel(BaseModel):
-    w_distance: float = 0.33
-    w_time: float = 0.33
-    w_cost: float = 0.34
+    w_distance: float = 0.15
+    w_time: float = 0.35
+    w_cost: float = 0.0       # Legacy; kept for backward compat
+    w_energy: float = 0.25   # Thermodynamic energy objective
+    w_cognitive: float = 0.25 # Driver ergonomics objective
 
 class RouteRequest(BaseModel):
     depot_lat: float
@@ -226,10 +232,17 @@ def _build_problem(req_stops, req_vehicles, depot_lat, depot_lon) -> VRPProblem:
 
 
 def _routes_to_response(routes, problem, elapsed_s, algo, fitness_hist, div_hist):
-    """Format solver routes into API response."""
+    """Format solver routes into API response with eco-energy and cognitive metrics."""
+    from src.optimizer.fitness import CognitiveLoadEvaluator
+    from src.optimizer.turn_analyzer import TurnAnalyzer
+
     em = compute_fleet_emissions(routes, problem)
+    cognitive_eval = CognitiveLoadEvaluator(road_graph=_state.graph)
+    turn_analyzer  = TurnAnalyzer(_state.graph)
 
     route_list = []
+    fleet_cognitive_scores = []
+
     for vi, route in enumerate(routes):
         veh = problem.vehicles[vi] if vi < len(problem.vehicles) else None
         nodes = [0] + [s + 1 for s in route] + [0]
@@ -253,7 +266,51 @@ def _routes_to_response(routes, problem, elapsed_s, algo, fitness_hist, div_hist
             for s in route
         ]
 
-        # Extract road-following polyline from graph if available
+        # ── Phase 4: Per-route energy breakdown ──────────────────────────────
+        energy_breakdown = {}
+        if veh is not None and problem.dist_matrix is not None and problem.time_matrix is not None:
+            engine = FleetEnergyEngine.from_vehicle(veh)
+            edge_list = [
+                {
+                    "length_m": float(problem.dist_matrix[nodes[i]][nodes[i+1]]),
+                    "duration_s": max(float(problem.time_matrix[nodes[i]][nodes[i+1]]), 1.0),
+                    "free_flow_speed_kmh": 40.0,
+                    "elevation_gain_m": 0.0,
+                }
+                for i in range(len(nodes) - 1)
+            ]
+            route_energy = engine.calculate_route_energy(edge_list)
+            energy_breakdown = {
+                "vehicle_type": route_energy.vehicle_type,
+                "is_electric": route_energy.is_electric,
+                "total_energy_kwh": route_energy.total_energy_kwh,
+                "total_fuel_liters": route_energy.total_fuel_liters,
+                "co2_kg": route_energy.total_co2_kg,
+                "mechanical_kwh": route_energy.total_mechanical_kwh,
+                "aux_kwh": route_energy.total_aux_kwh,
+                "regen_recovered_kwh": route_energy.total_regen_recovered_kwh,
+            }
+
+        # ── Phase 4: Per-route cognitive stress score ─────────────────────────
+        cog_score = cognitive_eval.calculate_route_cognitive_load(route, problem)
+        fleet_cognitive_scores.append(cog_score)
+
+        # Turn analysis summary (Phase 3)
+        turns_summary = {"right_turns": 0, "left_turns": 0, "u_turns": 0, "method": "empirical"}
+        if _state.graph and hasattr(problem, "node_ids") and problem.node_ids:
+            osm_nodes = [problem.node_ids[n] for n in nodes if n < len(problem.node_ids)]
+            if len(osm_nodes) >= 3:
+                turn_events = turn_analyzer.analyze_route(osm_nodes)
+                counts = turn_analyzer.count_by_type(turn_events)
+                turns_summary = {
+                    "right_turns": counts.get("right", 0),
+                    "left_turns":  counts.get("left", 0),
+                    "u_turns":     counts.get("uturn", 0),
+                    "straight":    counts.get("straight", 0),
+                    "method": "osmnx_geometric",
+                }
+
+        # ── Road-following polyline ───────────────────────────────────────────
         polyline = []
         if hasattr(problem, 'node_ids') and _state.graph:
             try:
@@ -264,30 +321,49 @@ def _routes_to_response(routes, problem, elapsed_s, algo, fitness_hist, div_hist
                     for pid in path:
                         if pid in _state.graph.node_coords:
                             coord = _state.graph.node_coords[pid]
-                            # GeoJSON-style [lat, lon] for Leaflet
                             if not polyline or polyline[-1] != [coord[0], coord[1]]:
                                 polyline.append([coord[0], coord[1]])
             except Exception:
                 pass
 
         route_list.append({
-            "vehicle_id":  veh.id if veh else vi,
-            "is_ev":       veh.is_ev if veh else False,
-            "stops":       stops_info,
-            "distance_km": round(dist_m / 1000.0, 3),
-            "travel_time_min": round(time_s / 60.0, 1),
-            "stop_count":  len(route),
-            "polyline": polyline,
+            "vehicle_id":       veh.id if veh else vi,
+            "is_ev":            veh.is_ev if veh else False,
+            "stops":            stops_info,
+            "distance_km":      round(dist_m / 1000.0, 3),
+            "travel_time_min":  round(time_s / 60.0, 1),
+            "stop_count":       len(route),
+            "polyline":         polyline,
+            # Phase 4 additions
+            "energy":           energy_breakdown,
+            "cognitive_stress": round(cog_score, 3),
+            "turns":            turns_summary,
         })
 
+    # Fleet-level Gini equity
+    from src.optimizer.fitness import CognitiveLoadEvaluator as _CLE
+    _tmp = _CLE()
+    gini_penalty = _tmp.fleet_workload_equity_penalty(fleet_cognitive_scores)
+
     return {
-        "routes":        route_list,
-        "elapsed_s":     round(elapsed_s, 4),
-        "algorithm":     algo,
-        "emissions":     em.__dict__,
-        "convergence":   fitness_hist,
-        "diversity":     div_hist,
-        "depot":         {"lat": problem.depot_lat, "lon": problem.depot_lon},
+        "routes":           route_list,
+        "elapsed_s":        round(elapsed_s, 4),
+        "algorithm":        algo,
+        "emissions":        em.__dict__,
+        "convergence":      fitness_hist,
+        "diversity":        div_hist,
+        "depot":            {"lat": problem.depot_lat, "lon": problem.depot_lon},
+        # Phase 4: fleet-level eco-cognitive summary
+        "eco_cognitive": {
+            "fleet_cognitive_scores":    [round(s, 3) for s in fleet_cognitive_scores],
+            "total_cognitive_stress":    round(sum(fleet_cognitive_scores), 3),
+            "gini_equity_penalty":       round(gini_penalty, 4),
+            "fleet_co2_kg":              round(em.total_co2_kg, 3),
+            "fleet_energy_kwh":          round(em.total_energy_kwh, 3),
+            "fleet_fuel_liters":         round(em.total_fuel_liters, 3),
+            "fleet_regen_recovered_kwh": round(em.total_regen_recovered_kwh, 3),
+            "co2_reduction_pct":         em.co2_reduction_pct,
+        },
     }
 
 
@@ -623,9 +699,13 @@ async def solve_route(req: RouteRequest):
         _ensure_graph()
         problem = _build_problem(req.stops, req.vehicles, req.depot_lat, req.depot_lon)
 
-        weights = FitnessWeights(**(req.weights.model_dump() if req.weights else {}))
+        weights_dict = req.weights.model_dump() if req.weights else {}
+        # Remove legacy cost key if present so FitnessWeights doesn't choke
+        weights_dict.pop("w_cost", None)
+        weights = FitnessWeights(**weights_dict)
 
-        # Build solver config from optional overrides
+        # Phase 4: pass loaded graph so Phase 3 turn-angle detection is active
+        evaluator = FitnessEvaluator(problem, weights, road_graph=_state.graph)
         qpso_kwargs = {}
         if req.qpso_config:
             for k in ("population_size","max_iterations","beta_start","beta_end","greedy_fraction","seed"):
@@ -638,7 +718,7 @@ async def solve_route(req: RouteRequest):
             solver = GASolver(pop_size=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
         elif req.algorithm == "aco":
             from src.baselines.aco import ACOSolver
-            solver = ACOSolver(num_ants=cfg.population_size, max_iter=cfg.max_iterations)
+            solver = ACOSolver(n_ants=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
         elif req.algorithm == "pso":
             from src.baselines.pso_classic import ClassicPSOSolver
             solver = ClassicPSOSolver(pop_size=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
@@ -651,11 +731,7 @@ async def solve_route(req: RouteRequest):
         else:
             solver = QPSOSolver(cfg)
 
-        evaluator = FitnessEvaluator(problem, weights)
         result = solver.solve(problem, evaluator)
-
-        _state.last_result = result.__dict__
-        _state.metrics["total_solves"] += 1
 
         response = _routes_to_response(
             result.routes, problem, result.elapsed_s,
@@ -663,6 +739,9 @@ async def solve_route(req: RouteRequest):
         )
         response["fitness"] = result.fitness
         response["iterations"] = result.iterations_run
+
+        _state.last_result = response
+        _state.metrics["total_solves"] += 1
 
         return response
 
@@ -685,7 +764,9 @@ async def start_route_job(req: RouteRequest):
         try:
             _ensure_graph()
             problem = _build_problem(req.stops, req.vehicles, req.depot_lat, req.depot_lon)
-            weights = FitnessWeights(**(req.weights.model_dump() if req.weights else {}))
+            weights_dict = req.weights.model_dump() if req.weights else {}
+            weights_dict.pop("w_cost", None)
+            weights = FitnessWeights(**weights_dict)
             
             qpso_kwargs = {}
             if req.qpso_config:
@@ -694,16 +775,33 @@ async def start_route_job(req: RouteRequest):
                         qpso_kwargs[k] = req.qpso_config[k]
             cfg = QPSOConfig(**qpso_kwargs)
             
-            solver = QPSOSolver(cfg)
-            evaluator = FitnessEvaluator(problem, weights)
-            
-            def progress_cb(it, fit, div):
-                update_job_progress(job_id, it, fit, div)
-                
-            result = solver.solve(problem, evaluator, weights, progress_cb)
-            
-            _state.last_result = result.__dict__
-            _state.metrics["total_solves"] += 1
+            evaluator = FitnessEvaluator(problem, weights, road_graph=_state.graph)
+
+            if req.algorithm == "ga":
+                from src.baselines.ga import GASolver
+                solver = GASolver(pop_size=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
+                result = solver.solve(problem, evaluator)
+            elif req.algorithm == "aco":
+                from src.baselines.aco import ACOSolver
+                solver = ACOSolver(n_ants=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
+                result = solver.solve(problem, evaluator)
+            elif req.algorithm == "pso":
+                from src.baselines.pso_classic import ClassicPSOSolver
+                solver = ClassicPSOSolver(pop_size=cfg.population_size, max_iter=cfg.max_iterations, seed=cfg.seed)
+                result = solver.solve(problem, evaluator)
+            elif req.algorithm == "nn":
+                from src.baselines.nn import NNSolver
+                solver = NNSolver()
+                result = solver.solve(problem, evaluator)
+            elif req.algorithm == "cw":
+                from src.baselines.cw import CWSolver
+                solver = CWSolver()
+                result = solver.solve(problem, evaluator)
+            else:
+                solver = QPSOSolver(cfg)
+                def progress_cb(it, fit, div):
+                    update_job_progress(job_id, it, fit, div)
+                result = solver.solve(problem, evaluator, weights, progress_cb)
             
             response = _routes_to_response(
                 result.routes, problem, result.elapsed_s,
@@ -711,6 +809,9 @@ async def start_route_job(req: RouteRequest):
             )
             response["fitness"] = result.fitness
             response["iterations"] = result.iterations_run
+
+            _state.last_result = response
+            _state.metrics["total_solves"] += 1
             
             complete_job(job_id, response)
         except Exception as e:
@@ -735,7 +836,7 @@ async def benchmark(req: BenchmarkRequest):
     try:
         _ensure_graph()
         problem  = _build_problem(req.stops, req.vehicles, req.depot_lat, req.depot_lon)
-        evaluator = FitnessEvaluator(problem)
+        evaluator = FitnessEvaluator(problem, road_graph=_state.graph)
 
         # Calibrate evaluator on a quick greedy sample
         from src.optimizer.encoding import encode_greedy, decode_particle
@@ -812,4 +913,82 @@ async def get_metrics():
             "nodes": _state.graph.num_nodes if _state.graph else 0,
             "edges": _state.graph.num_edges if _state.graph else 0,
         },
+    }
+
+
+# ── Phase 4: Eco-Cognitive Fleet Metrics ─────────────────────────────────────
+
+@app.get("/fleet/eco-metrics", tags=["eco-cognitive"])
+async def get_fleet_eco_metrics():
+    """
+    Phase 4 — Eco-Energy & Driver Cognitive Metrics from last fleet solve.
+
+    Feeds the frontend dashboard panels:
+      • Driver Ergonomics & Wellness Gauge (Optimal/Demanding/Burnout Risk)
+      • EV Range & Eco Profile (battery discharge breakdown)
+      • CO₂ reduction vs all-ICE baseline
+      • Fleet equity Gini coefficient (G_fleet ≤ 0.15 target)
+
+    Returns 404 if no solve has been run yet in this session.
+    """
+    if _state.last_result is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No fleet solve result available. Run POST /route or POST /route/job first.",
+        )
+
+    result = _state.last_result
+    eco = result.get("eco_cognitive", {})
+    emissions = result.get("emissions", {})
+
+    # Build driver wellness classification per spec §3.2 thresholds
+    fleet_scores = eco.get("fleet_cognitive_scores", [])
+    driver_wellness = []
+    for i, score in enumerate(fleet_scores):
+        if score < 20.0:
+            level, label = "optimal", "Optimal"
+        elif score < 45.0:
+            level, label = "demanding", "Demanding"
+        else:
+            level, label = "burnout_risk", "Burnout Risk"
+        driver_wellness.append({
+            "driver_index": i,
+            "cognitive_stress": score,
+            "wellness_level": level,
+            "wellness_label": label,
+        })
+
+    gini = eco.get("gini_equity_penalty", 0.0)
+
+    return {
+        "last_algorithm": result.get("algorithm", "unknown"),
+        "last_elapsed_s": result.get("elapsed_s", 0.0),
+        # Driver ergonomics (Subsystem B)
+        "driver_wellness": driver_wellness,
+        "total_cognitive_stress": eco.get("total_cognitive_stress", 0.0),
+        "gini_equity_coefficient": gini,
+        "gini_threshold": 0.15,
+        "gini_compliant": gini == 0.0,
+        # Fleet energy (Subsystem A)
+        "fleet_co2_kg": eco.get("fleet_co2_kg", emissions.get("total_co2_kg", 0.0)),
+        "fleet_energy_kwh": eco.get("fleet_energy_kwh", emissions.get("total_energy_kwh", 0.0)),
+        "fleet_fuel_liters": eco.get("fleet_fuel_liters", emissions.get("total_fuel_liters", 0.0)),
+        "fleet_regen_recovered_kwh": eco.get("fleet_regen_recovered_kwh", 0.0),
+        "co2_reduction_pct": eco.get("co2_reduction_pct", emissions.get("co2_reduction_pct", 0.0)),
+        "co2_saved_vs_all_ice_kg": emissions.get("co2_saved_vs_all_ice", 0.0),
+        # India carbon intensity constants (for frontend display)
+        "grid_carbon_factor_kg_per_kwh": 0.716,
+        "diesel_co2_kg_per_liter": 2.68,
+        # Per-route breakdown
+        "routes": [
+            {
+                "vehicle_id": r.get("vehicle_id"),
+                "is_ev": r.get("is_ev"),
+                "stop_count": r.get("stop_count"),
+                "cognitive_stress": r.get("cognitive_stress"),
+                "turns": r.get("turns", {}),
+                "energy": r.get("energy", {}),
+            }
+            for r in result.get("routes", [])
+        ],
     }

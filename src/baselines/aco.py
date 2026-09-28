@@ -24,7 +24,9 @@ class ACOSolver:
     """
 
     def __init__(self, n_ants=40, max_iter=200, alpha=1.2, beta=3.0,
-                 rho=0.15, tau_min=0.01, tau_max=10.0, seed=42):
+                 rho=0.15, tau_min=0.01, tau_max=10.0, seed=42, num_ants=None):
+        if num_ants is not None:
+            n_ants = num_ants
         self.n_ants   = n_ants
         self.max_iter = max_iter
         self.alpha    = alpha    # pheromone importance

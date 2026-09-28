@@ -124,3 +124,78 @@ def test_emissions_report_fields():
     assert report.ev_count == 1
     assert report.ice_count == 1
     assert report.total_distance_km > 0
+
+
+# ─── Eco & Cognitive 4 Phases ───────────────────────────────────────────────
+
+def test_phase1_fleet_energy_engine():
+    from src.sustainability.emissions import FleetEnergyEngine
+    engine_ev = FleetEnergyEngine(vehicle_type="ev_van")
+    res_ev = engine_ev.calculate_edge_energy(length_m=500.0, duration_s=60.0, free_flow_speed_kmh=40.0)
+    assert res_ev.is_electric is True
+    assert res_ev.energy_kwh > 0.0
+    assert res_ev.fuel_liters == 0.0
+
+    engine_ice = FleetEnergyEngine(vehicle_type="ice_lcv")
+    res_ice = engine_ice.calculate_edge_energy(length_m=500.0, duration_s=60.0, free_flow_speed_kmh=40.0)
+    assert res_ice.is_electric is False
+    assert res_ice.fuel_liters > 0.0
+    assert res_ice.co2_kg > 0.0
+
+
+def test_phase2_cognitive_load_evaluator():
+    from src.optimizer.fitness import CognitiveLoadEvaluator
+    from src.optimizer.encoding import Stop, Vehicle, VRPProblem
+    import numpy as np
+
+    stops = [Stop(id=1, lat=19.06, lon=72.86), Stop(id=2, lat=19.07, lon=72.87)]
+    prob = VRPProblem(depot_lat=19.05, depot_lon=72.85, stops=stops, vehicles=[Vehicle(id=1)])
+    prob.dist_matrix = np.array([[0, 1000, 2000], [1000, 0, 1000], [2000, 1000, 0]], dtype=float)
+    prob.time_matrix = np.array([[0, 120, 240], [120, 0, 120], [240, 120, 0]], dtype=float)
+
+    evaluator = CognitiveLoadEvaluator(road_graph=None)
+    score = evaluator.calculate_route_cognitive_load([0, 1], prob)
+    assert score >= 0.0
+
+    equity = evaluator.fleet_workload_equity_penalty([10.0, 12.0])
+    assert equity >= 0.0
+
+
+def test_phase3_turn_analyzer():
+    from src.optimizer.turn_analyzer import TurnAnalyzer, _bearing_deg, estimate_turns_from_stops
+    b = _bearing_deg(19.0596, 72.8656, 19.0605, 72.8690)
+    assert 0 <= b <= 360
+
+    est = estimate_turns_from_stops(10)
+    assert est["right_turns"] > 0
+    assert est["total_junction_cost"] > 0
+
+    analyzer = TurnAnalyzer(road_graph=None)
+    turns = analyzer.analyze_route([1, 2, 3])
+    assert isinstance(turns, list)
+
+
+def test_solvers_qpso_ga_aco():
+    from src.optimizer.encoding import Stop, Vehicle, VRPProblem
+    from src.optimizer.fitness import FitnessEvaluator
+    from src.optimizer.qpso import QPSOSolver, QPSOConfig
+    from src.baselines.ga import GASolver
+    from src.baselines.aco import ACOSolver
+
+    stops = [
+        Stop(id=1, lat=19.0657, lon=72.8683, demand=1.0),
+        Stop(id=2, lat=19.0700, lon=72.8700, demand=1.0),
+    ]
+    vehicles = [Vehicle(id=1, capacity=5.0)]
+    prob = VRPProblem(depot_lat=19.0596, depot_lon=72.8656, stops=stops, vehicles=vehicles)
+    evaluator = FitnessEvaluator(prob)
+
+    res_qpso = QPSOSolver(QPSOConfig(max_iterations=10, population_size=10)).solve(prob, evaluator)
+    assert len(res_qpso.routes) == 1
+
+    res_ga = GASolver(pop_size=10, max_iter=10).solve(prob, evaluator)
+    assert len(res_ga.routes) == 1
+
+    res_aco = ACOSolver(n_ants=10, max_iter=10).solve(prob, evaluator)
+    assert len(res_aco.routes) == 1
+

@@ -530,6 +530,7 @@ function RouteToggle({ label, checked, onCheckedChange, tone }: { label: string;
 function FleetView() {
   const [areaId, setAreaId] = useState<AreaId>("bkc");
   const [stopLocations, setStopLocations] = useState<string[]>([areaMeta("bkc").label]);
+  const [algorithm, setAlgorithm] = useState("qpso");
   const [fleet, setFleet] = useState([3]);
   const [trafficRefreshing, setTrafficRefreshing] = useState(false);
   const [trafficVisible, setTrafficVisible] = useState(true);
@@ -615,6 +616,7 @@ function FleetView() {
                 depot_lon: depot.lon,
                 stops: resolvedStops,
                 vehicles: generatedVehicles,
+                algorithm,
                 qpso_config: { max_iterations: 50, population_size: 40 }
         });
         
@@ -671,7 +673,7 @@ function FleetView() {
                   setTrafficSegments([]);
                   setAreaId(nextArea);
                   }} options={AREAS.map(({ id, label }) => [id, label])} />
-                <SelectField label="Algorithm" defaultValue="qpso" options={[["qpso", "QPSO — Quantum Swarm"], ["ga", "GA — Genetic Algorithm"], ["aco", "ACO — Ant Colony"]]} />
+                <SelectField label="Algorithm" value={algorithm} onValueChange={setAlgorithm} options={[["qpso", "QPSO — Quantum Swarm"], ["ga", "GA — Genetic Algorithm"], ["aco", "ACO — Ant Colony"]]} />
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between text-xs font-medium text-muted-foreground"><span>Delivery Locations</span><span>{stopCount}/15</span></div>
                   {stopLocations.map((location, index) => (
