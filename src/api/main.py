@@ -24,6 +24,9 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
@@ -31,6 +34,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
 
 from src.graph.loader import (
     RoadGraph,
@@ -49,6 +53,9 @@ from src.api.jobs import create_job, update_job_progress, complete_job, fail_job
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
+
+# Load project credentials for both `python run.py` and direct Uvicorn startup.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # App & CORS
@@ -77,6 +84,9 @@ class AppState:
     spatial_index: Optional[SpatialIndex] = None
     area_key: Optional[str] = None
     last_result: Optional[dict] = None
+    traffic_source: Optional[str] = None
+    traffic_refreshed_at: Optional[str] = None
+    traffic_updated_edges: int = 0
     metrics: dict = {
         "total_solves": 0,
         "avg_solve_s": 0.0,
@@ -96,6 +106,12 @@ class TrafficUpdate(BaseModel):
     edges: List[Dict[str, Any]] = Field(
         ...,
         description='List of {"u": int, "v": int, "weight": float}'
+    )
+
+class TrafficRefreshRequest(BaseModel):
+    max_segments: int = Field(
+        100, ge=1, le=1000,
+        description="Maximum TomTom road-segment lookups for this refresh (each lookup uses one monthly request).",
     )
 
 class StopModel(BaseModel):
@@ -164,6 +180,9 @@ def _ensure_graph(area: Optional[str] = None) -> RoadGraph:
     _state.graph = graph
     _state.spatial_index = SpatialIndex(graph.node_coords)
     _state.area_key = target_area
+    _state.traffic_source = None
+    _state.traffic_refreshed_at = None
+    _state.traffic_updated_edges = 0
     return graph
 
 
@@ -365,7 +384,96 @@ async def update_traffic(req: TrafficUpdate):
         if ok:
             updated.append({"u": u, "v": v, "weight": w})
 
+    _state.traffic_source = "manual"
+    _state.traffic_refreshed_at = datetime.now(timezone.utc).isoformat()
+    _state.traffic_updated_edges = len(updated)
+
     return {"updated": len(updated), "edges": updated}
+
+
+@app.post("/graph/traffic/refresh", tags=["graph"])
+async def refresh_traffic_from_tomtom(req: TrafficRefreshRequest):
+    """Refresh a bounded, evenly sampled set of graph edges from live TomTom flow data."""
+    if _state.graph is None:
+        raise HTTPException(status_code=400, detail="Graph not loaded")
+
+    api_key = os.getenv("TOMTOM_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="TomTom traffic is not configured. Add TOMTOM_API_KEY to .env and restart the backend.",
+        )
+
+    import httpx
+
+    graph = _state.graph
+    edges = sorted(graph.nx_graph.edges())
+    if not edges:
+        return {"source": "tomtom_live", "updated": 0, "requested": 0, "failed": 0}
+
+    # Spread a small free-tier request budget across the area instead of only
+    # refreshing the first geographically clustered edges in graph order.
+    count = min(req.max_segments, len(edges))
+    selected = [edges[(i * len(edges)) // count] for i in range(count)]
+    request_slots = asyncio.Semaphore(8)
+
+    async def fetch_flow(client, u, v):
+        u_lat, u_lon = graph.node_coords[u]
+        v_lat, v_lon = graph.node_coords[v]
+        point = f"{(u_lat + v_lat) / 2:.6f},{(u_lon + v_lon) / 2:.6f}"
+        try:
+            async with request_slots:
+                response = await client.get(
+                    "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json",
+                    params={"key": api_key, "point": point},
+                )
+            if response.status_code != 200:
+                return u, v, None
+            flow = response.json().get("flowSegmentData", {})
+            speed = float(flow.get("currentSpeed", 0))
+            confidence = float(flow.get("confidence", 0))
+            raw_coordinates = flow.get("coordinates", {}).get("coordinate", [])
+            geometry = [
+                [float(point["longitude"]), float(point["latitude"])]
+                for point in raw_coordinates
+                if "longitude" in point and "latitude" in point
+            ]
+            if speed <= 0 or confidence < 0.4 or flow.get("roadClosure") is True:
+                return u, v, None
+            return u, v, {
+                "speed_kmh": speed,
+                "confidence": confidence,
+                "free_flow_speed_kmh": float(flow.get("freeFlowSpeed", 0)),
+                "current_travel_time_s": flow.get("currentTravelTime"),
+                "geometry": geometry if len(geometry) >= 2 else [],
+            }
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            # Avoid logging exception strings: request URLs contain the API key.
+            return u, v, None
+
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        results = await asyncio.gather(*(fetch_flow(client, u, v) for u, v in selected))
+
+    updated = []
+    for u, v, flow in results:
+        if flow and graph.update_edge_speed(u, v, flow["speed_kmh"]):
+            updated.append({"u": u, "v": v, **flow})
+    failed = count - len(updated)
+
+    if updated:
+        _state.traffic_source = "tomtom_live"
+        _state.traffic_refreshed_at = datetime.now(timezone.utc).isoformat()
+        _state.traffic_updated_edges = len(updated)
+    return {
+        "source": "tomtom_live",
+        "area": graph.city,
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "requested": count,
+        "updated": len(updated),
+        "failed_or_low_confidence": failed,
+        "monthly_free_tier_limit": 20000,
+        "edges": updated,
+    }
 
 
 # ── Geocoding ────────────────────────────────────────────────────────────────
@@ -404,8 +512,9 @@ async def geocode_reverse(
 @app.post("/route/compare", tags=["routing"])
 async def compare_routes(req: RouteCompareRequest):
     """
-    Part A: Compare baseline (Dijkstra shortest-path) vs our route
-    between source → stops → destination.
+    Compare shortest-distance and fastest-time Dijkstra routes over the
+    loaded OSM graph between source → stops → destination. Travel-time
+    weights use static OSM estimates until updated by a traffic feed.
     """
     try:
         graph = _ensure_graph(req.area)
@@ -419,7 +528,7 @@ async def compare_routes(req: RouteCompareRequest):
         # Build waypoint chain: source → stop1 → stop2 → ... → destination
         waypoints = [src_node] + stop_nodes + [dst_node]
 
-        # BASELINE: shortest distance path (weight=length)
+        # Baseline: shortest physical distance using static OSM lengths.
         baseline_segments = []
         for i in range(len(waypoints) - 1):
             seg = compute_route(graph, waypoints[i], waypoints[i+1], weight_key="length")
@@ -432,7 +541,7 @@ async def compare_routes(req: RouteCompareRequest):
             if seg["geojson"]:
                 baseline_geojson_coords.extend(seg["geojson"]["geometry"]["coordinates"])
 
-        # OUR ROUTE: fastest path (weight=weight, i.e. travel time)
+        # Alternative: fastest estimated travel time using static OSM speeds.
         our_segments = []
         for i in range(len(waypoints) - 1):
             seg = compute_route(graph, waypoints[i], waypoints[i+1], weight_key="weight")
@@ -445,33 +554,44 @@ async def compare_routes(req: RouteCompareRequest):
             if seg["geojson"]:
                 our_geojson_coords.extend(seg["geojson"]["geometry"]["coordinates"])
 
-        computation_ms = sum(s["computation_ms"] for s in baseline_segments + our_segments)
-        identical = (baseline_distance_km == our_distance_km)
+        baseline_computation_ms = sum(s["computation_ms"] for s in baseline_segments)
+        our_computation_ms = sum(s["computation_ms"] for s in our_segments)
+        baseline_path = [node for segment in baseline_segments for node in segment["path"]]
+        our_path = [node for segment in our_segments for node in segment["path"]]
+        identical = baseline_path == our_path
 
         return {
             "baseline": {
+                "method": "dijkstra_shortest_distance",
+                "cost_basis": "static_osm_length",
                 "distance_km": round(baseline_distance_km, 3),
                 "time_min": round(baseline_time_min, 1),
                 "segments": sum(s["segments"] for s in baseline_segments),
                 "geometry": {
                     "type": "Feature",
                     "geometry": {"type": "LineString", "coordinates": baseline_geojson_coords},
-                    "properties": {"type": "baseline"},
+                    "properties": {"type": "baseline", "method": "dijkstra_shortest_distance"},
                 },
-                "computation_ms": round(computation_ms / 2, 2),
+                "computation_ms": round(baseline_computation_ms, 2),
             },
             "ours": {
+                "method": "dijkstra_fastest_time",
+                "cost_basis": "graph_travel_time_weights",
                 "distance_km": round(our_distance_km, 3),
                 "time_min": round(our_time_min, 1),
                 "segments": sum(s["segments"] for s in our_segments),
                 "geometry": {
                     "type": "Feature",
                     "geometry": {"type": "LineString", "coordinates": our_geojson_coords},
-                    "properties": {"type": "qpso"},
+                    "properties": {"type": "fastest_time", "method": "dijkstra_fastest_time"},
                 },
-                "computation_ms": round(computation_ms / 2, 2),
+                "computation_ms": round(our_computation_ms, 2),
             },
             "identical": identical,
+            "traffic_aware": _state.traffic_source == "tomtom_live",
+            "traffic_source": _state.traffic_source or "static_osm_estimate",
+            "traffic_refreshed_at": _state.traffic_refreshed_at,
+            "traffic_updated_edges": _state.traffic_updated_edges,
             "source_snapped": {
                 "node_id": src_node,
                 "lat": graph.node_coords[src_node][0],

@@ -68,6 +68,31 @@ export function loadGraph(area: string) {
   });
 }
 
+export type TrafficRefreshResponse = {
+  source: string;
+  area: string;
+  refreshed_at: string | null;
+  requested: number;
+  updated: number;
+  failed_or_low_confidence: number;
+  edges: Array<{
+    u: number;
+    v: number;
+    speed_kmh: number;
+    confidence: number;
+    free_flow_speed_kmh: number;
+    geometry: number[][];
+  }>;
+};
+
+export function refreshLiveTraffic(maxSegments = 20) {
+  return jsonFetch<TrafficRefreshResponse>("/graph/traffic/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_segments: maxSegments }),
+  });
+}
+
 export type GeoHit = { display_name: string; lat: number; lon: number };
 
 export async function geocode(q: string, area?: string): Promise<GeoHit | null> {
@@ -83,16 +108,24 @@ export async function geocode(q: string, area?: string): Promise<GeoHit | null> 
 
 export type CompareResponse = {
   baseline: {
+    method: string;
+    cost_basis: string;
     distance_km: number;
     time_min: number;
     geometry: { type: string; geometry: { type: string; coordinates: Array<number[] | string> } };
   };
   ours: {
+    method: string;
+    cost_basis: string;
     distance_km: number;
     time_min: number;
     geometry: { type: string; geometry: { type: string; coordinates: Array<number[] | string> } };
   };
   identical: boolean;
+  traffic_aware: boolean;
+  traffic_source: string;
+  traffic_refreshed_at: string | null;
+  traffic_updated_edges: number;
 };
 
 export function compareRoutes(body: {

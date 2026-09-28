@@ -7,8 +7,8 @@ import {
   Atom,
   Boxes,
   ChevronRight,
-  Clock3,
   Cloud,
+  Clock3,
   Gauge,
   GitCompareArrows,
   Leaf,
@@ -19,6 +19,7 @@ import {
   Network,
   Plus,
   Route as RouteIcon,
+  RefreshCw,
   Satellite,
   Settings2,
   Sparkles,
@@ -42,7 +43,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { AREAS, areaMeta, compareRoutes, geocode, jobStreamUrl, loadGraph, startRouteJob, type AreaId, type CompareResponse } from "@/lib/api";
+import { AREAS, areaMeta, compareRoutes, geocode, jobStreamUrl, loadGraph, refreshLiveTraffic, startRouteJob, type AreaId, type CompareResponse, type TrafficSegment } from "@/lib/api";
 
 type View = "home" | "compare" | "fleet";
 const MiniChart = lazy(() => import("./mini-chart"));
@@ -171,16 +172,18 @@ function HomeView({ onChange }: { onChange: (view: View) => void }) {
 
 function MapCanvas({ 
   baseline = true, 
-  qpso = true, 
-  traffic = false, 
+  optimized = true,
+  showTraffic = true,
+  trafficSegments = [],
   nodes = true, 
   fleet = false,
   routeData = null,
   areaId = "bkc",
 }: { 
   baseline?: boolean; 
-  qpso?: boolean; 
-  traffic?: boolean; 
+  optimized?: boolean;
+  showTraffic?: boolean;
+  trafficSegments?: TrafficSegment[];
   nodes?: boolean; 
   fleet?: boolean;
   routeData?: any;
@@ -208,8 +211,30 @@ function MapCanvas({
               tileSize: 256,
               attribution: "© OpenStreetMap contributors",
             },
+            "live-traffic": {
+              type: "geojson",
+              data: { type: "FeatureCollection", features: [] },
+            },
           },
-          layers: [{ id: "openstreetmap", type: "raster", source: "openstreetmap" }],
+          layers: [
+            { id: "openstreetmap", type: "raster", source: "openstreetmap" },
+            {
+              id: "live-traffic",
+              type: "line",
+              source: "live-traffic",
+              layout: { "line-cap": "round", "line-join": "round", visibility: showTraffic ? "visible" : "none" },
+              paint: {
+                "line-color": [
+                  "case",
+                  ["<", ["get", "speed_ratio"], 0.45], "#ef4444",
+                  ["<", ["get", "speed_ratio"], 0.75], "#f59e0b",
+                  "#22c55e",
+                ],
+                "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 6],
+                "line-opacity": 0.9,
+              },
+            },
+          ],
         },
         center: [areaMeta("bkc").center.lon, areaMeta("bkc").center.lat],
         zoom: 11,
@@ -244,12 +269,33 @@ function MapCanvas({
   }, [areaId, mapReady]);
 
   useEffect(() => {
+    const trafficSource = map.current?.getSource("live-traffic") as GeoJSONSource | undefined;
+    if (!trafficSource || !mapReady) return;
+    trafficSource.setData({
+      type: "FeatureCollection",
+      features: trafficSegments
+        .filter((segment) => segment.geometry.length >= 2)
+        .map((segment) => ({
+          type: "Feature" as const,
+          properties: {
+            speed_ratio: segment.free_flow_speed_kmh > 0
+              ? segment.speed_kmh / segment.free_flow_speed_kmh
+              : 1,
+            speed_kmh: segment.speed_kmh,
+          },
+          geometry: { type: "LineString" as const, coordinates: segment.geometry },
+        })),
+    });
+    map.current?.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
+  }, [trafficSegments, showTraffic, mapReady]);
+
+  useEffect(() => {
     const maplibreModule = maplibre.current;
     if (!map.current || !mapReady || !routeData || !maplibreModule) return;
 
     const sourceId = 'optimized-routes';
     const features = routeData.routes
-      .filter((route: any) => route.kind === "baseline" ? baseline : route.kind === "qpso" ? qpso : true)
+      .filter((route: any) => route.kind === "baseline" ? baseline : route.kind === "fastest_time" ? optimized : true)
       .map((route: any, idx: number) => {
         let coordinates = [];
         if (route.polyline && route.polyline.length > 0) {
@@ -330,7 +376,7 @@ function MapCanvas({
         }
     }
 
-  }, [routeData, baseline, qpso, mapReady]);
+  }, [routeData, baseline, optimized, mapReady]);
 
   return (
     <div className="relative h-full min-h-[280px] overflow-hidden rounded-md border border-border bg-map shadow-panel">
@@ -375,7 +421,7 @@ function CompareView() {
   const [destination, setDestination] = useState("Santacruz East, Mumbai");
   const [stops, setStops] = useState<string[]>([]);
   const [baseline, setBaseline] = useState(true);
-  const [qpso, setQpso] = useState(true);
+  const [showFastest, setShowFastest] = useState(true);
   const [comparison, setComparison] = useState<CompareResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -411,17 +457,22 @@ function CompareView() {
   };
 
   const distanceChange = comparison
-    ? ((comparison.baseline.distance_km - comparison.ours.distance_km) / Math.max(comparison.baseline.distance_km, 0.001)) * 100
+    ? ((comparison.ours.distance_km - comparison.baseline.distance_km) / Math.max(comparison.baseline.distance_km, 0.001)) * 100
     : null;
   const distanceLabel = distanceChange === null
     ? "Run comparison"
     : Math.abs(distanceChange) < 0.05
       ? "SAME DISTANCE"
-      : `${Math.abs(distanceChange).toFixed(1)}% ${distanceChange > 0 ? "SAVED" : "LONGER"}`;
+      : `${Math.abs(distanceChange).toFixed(1)}% ${distanceChange > 0 ? "LONGER DISTANCE" : "SHORTER DISTANCE"}`;
+  const fastestRouteLabel = comparison?.traffic_source === "tomtom_live"
+    ? "Fastest Time (TomTom Live)"
+    : comparison?.traffic_source === "manual"
+      ? "Fastest Time (Updated Weights)"
+      : "Fastest Time (Static OSM)";
   const compareMapData = comparison ? {
     routes: [
       { kind: "baseline", polyline: comparisonPolyline(comparison.baseline) },
-      { kind: "qpso", polyline: comparisonPolyline(comparison.ours) },
+      { kind: "fastest_time", polyline: comparisonPolyline(comparison.ours) },
     ],
   } : null;
 
@@ -431,7 +482,7 @@ function CompareView() {
         <div className="space-y-5 p-5">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><RouteIcon className="size-4 text-primary" /> Route Setup</div>
-            <p className="mt-1 text-xs text-muted-foreground">Define an A/B test across the live road graph.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Compare shortest distance with fastest graph travel time. The fastest route uses TomTom speeds after a traffic refresh; otherwise it uses OSM estimates.</p>
           </div>
           <div className="grid gap-4">
             <Field label="Source" icon={LocateFixed} value={source} onChange={setSource} placeholder="Enter pickup point" />
@@ -452,18 +503,18 @@ function CompareView() {
           <div className="border-t border-border pt-5">
             <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-foreground">Comparison Metrics</h2><span className="rounded-sm bg-status/10 px-2 py-1 text-[10px] font-semibold text-status">{distanceLabel}</span></div>
             <div className="grid grid-cols-[1fr_auto_1fr] gap-2 rounded-md border border-border bg-muted/40 p-3">
-              <MetricColumn label="Baseline" distance={comparison?.baseline.distance_km.toFixed(1) ?? "—"} time={comparison?.baseline.time_min.toFixed(0) ?? "—"} tone="baseline" />
+              <MetricColumn label="Shortest Distance" distance={comparison?.baseline.distance_km.toFixed(1) ?? "—"} time={comparison?.baseline.time_min.toFixed(0) ?? "—"} tone="baseline" />
               <div className="w-px bg-border" />
-              <MetricColumn label="Fastest Route" distance={comparison?.ours.distance_km.toFixed(1) ?? "—"} time={comparison?.ours.time_min.toFixed(0) ?? "—"} tone="primary" />
+              <MetricColumn label={fastestRouteLabel} distance={comparison?.ours.distance_km.toFixed(1) ?? "—"} time={comparison?.ours.time_min.toFixed(0) ?? "—"} tone="primary" />
             </div>
             <div className="mt-3 space-y-2">
-              <RouteToggle label="Baseline (Conventional)" checked={baseline} onCheckedChange={setBaseline} tone="baseline" />
-              <RouteToggle label="Our Route (QPSO)" checked={qpso} onCheckedChange={setQpso} tone="primary" />
+              <RouteToggle label="Shortest Distance" checked={baseline} onCheckedChange={setBaseline} tone="baseline" />
+              <RouteToggle label={fastestRouteLabel} checked={showFastest} onCheckedChange={setShowFastest} tone="primary" />
             </div>
           </div>
         </div>
       </ScrollArea>
-      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} qpso={qpso} routeData={compareMapData} areaId={areaId} /></div>
+      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} optimized={showFastest} routeData={compareMapData} areaId={areaId} /></div>
     </section>
   );
 }
@@ -480,7 +531,11 @@ function FleetView() {
   const [areaId, setAreaId] = useState<AreaId>("bkc");
   const [stopLocations, setStopLocations] = useState<string[]>([areaMeta("bkc").label]);
   const [fleet, setFleet] = useState([3]);
-  const [traffic, setTraffic] = useState(true);
+  const [trafficRefreshing, setTrafficRefreshing] = useState(false);
+  const [trafficVisible, setTrafficVisible] = useState(true);
+  const [trafficSegments, setTrafficSegments] = useState<TrafficSegment[]>([]);
+  const [trafficStatus, setTrafficStatus] = useState("");
+  const [trafficError, setTrafficError] = useState("");
   const [nodes, setNodes] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(100);
@@ -489,6 +544,26 @@ function FleetView() {
   const [error, setError] = useState("");
   const stopCount = stopLocations.length;
   const fleetCount = fleet[0] ?? 1;
+
+  const refreshTraffic = async () => {
+    setTrafficRefreshing(true);
+    setTrafficError("");
+    setTrafficStatus("");
+    try {
+      await loadGraph(areaId);
+      const result = await refreshLiveTraffic(20);
+      setTrafficSegments(result.edges);
+      setTrafficStatus(
+        result.updated > 0
+          ? `${result.updated} live road speeds applied (${result.requested} checked)`
+          : `No confident speeds found (${result.requested} roads checked)`,
+      );
+    } catch (cause) {
+      setTrafficError(cause instanceof Error ? cause.message : "Could not refresh live traffic.");
+    } finally {
+      setTrafficRefreshing(false);
+    }
+  };
   const routeStats = routeData ? [
     { label: "Total Distance", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.distance_km, 0).toFixed(1)} km`, icon: Navigation },
     { label: "Travel Time", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.travel_time_min, 0).toFixed(0)} min`, icon: Clock3 },
@@ -591,8 +666,11 @@ function FleetView() {
                   if (stopLocations.length === 1 && stopLocations[0] === areaMeta(areaId).label) {
                     setStopLocations([areaMeta(nextArea).label]);
                   }
+                  setTrafficStatus("");
+                  setTrafficError("");
+                  setTrafficSegments([]);
                   setAreaId(nextArea);
-                }} options={AREAS.map(({ id, label }) => [id, label])} />
+                  }} options={AREAS.map(({ id, label }) => [id, label])} />
                 <SelectField label="Algorithm" defaultValue="qpso" options={[["qpso", "QPSO — Quantum Swarm"], ["ga", "GA — Genetic Algorithm"], ["aco", "ACO — Ant Colony"]]} />
                 <div className="grid gap-2">
                   <div className="flex items-center justify-between text-xs font-medium text-muted-foreground"><span>Delivery Locations</span><span>{stopCount}/15</span></div>
@@ -626,12 +704,19 @@ function FleetView() {
           </Tabs>
         </Card>
         <div className="relative min-h-[300px] min-w-0">
-          <MapCanvas baseline={false} qpso traffic={traffic} nodes={nodes} fleet routeData={routeData} areaId={areaId} />
+          <MapCanvas baseline={false} showTraffic={trafficVisible} trafficSegments={trafficSegments} nodes={nodes} fleet routeData={routeData} areaId={areaId} />
           <div className="absolute right-3 top-3 z-20 w-48 rounded-md border border-border bg-surface/80 p-3 shadow-panel backdrop-blur-md sm:right-4 sm:top-4">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"><Network className="size-3.5 text-primary" /> Map layers</div>
-            <MapSwitch icon={Cloud} label="Live Traffic" checked={traffic} onCheckedChange={setTraffic} />
+            <Button type="button" size="sm" variant="outline" onClick={refreshTraffic} disabled={trafficRefreshing} className="w-full justify-start border-border bg-transparent text-xs">
+              <RefreshCw className={cn("size-3.5", trafficRefreshing && "animate-spin")} />
+              {trafficRefreshing ? "Refreshing traffic…" : "Refresh live speeds"}
+            </Button>
+            <MapSwitch icon={Cloud} label="Traffic overlay" checked={trafficVisible} onCheckedChange={setTrafficVisible} />
+            {trafficStatus && <p role="status" className="mt-2 text-[10px] leading-relaxed text-muted-foreground">{trafficStatus}</p>}
+            {trafficError && <p role="alert" className="mt-2 text-[10px] leading-relaxed text-destructive">{trafficError}</p>}
             <MapSwitch icon={Boxes} label="Show Nodes" checked={nodes} onCheckedChange={setNodes} />
           </div>
+          {trafficSegments.length > 0 && <div className="absolute bottom-4 left-4 z-20 rounded-md border border-border bg-surface/85 px-3 py-2 text-[10px] text-muted-foreground shadow-panel backdrop-blur-md">Traffic data © TomTom · Green: flowing · Amber: slow · Red: congested</div>}
           <div className="absolute bottom-4 right-4 z-20 rounded-md border border-border bg-surface/80 px-3 py-2 font-mono text-[10px] text-muted-foreground backdrop-blur-md">RUN #{run || 1} · {running ? `SOLVING ${progress}%` : routeData ? "COMPLETE" : "READY"}</div>
         </div>
       </div>
@@ -659,7 +744,7 @@ function ControlSlider({ label, value, onValueChange, min, max, suffix }: { labe
   return <div className="grid gap-3"><div className="flex items-end justify-between"><label className="text-xs font-medium text-muted-foreground">{label}</label><span className="font-mono text-lg font-semibold text-foreground">{value[0]} <span className="text-[10px] font-normal text-muted-foreground">{suffix}</span></span></div><Slider value={value} onValueChange={onValueChange} min={min} max={max} step={1} aria-label={label} /><div className="flex justify-between font-mono text-[9px] text-muted-foreground"><span>{min}</span><span>{max}</span></div></div>;
 }
 
-function MapSwitch({ icon: Icon, label, checked, onCheckedChange }: { icon: typeof Cloud; label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
+function MapSwitch({ icon: Icon, label, checked, onCheckedChange }: { icon: typeof Boxes; label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
   return <div className="flex items-center justify-between border-t border-border/70 py-2 first:border-t-0"><span className="flex items-center gap-2 text-xs text-foreground"><Icon className="size-3.5 text-muted-foreground" />{label}</span><Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={label} /></div>;
 }
 
