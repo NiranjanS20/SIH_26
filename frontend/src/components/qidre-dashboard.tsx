@@ -1,15 +1,12 @@
-import { useEffect, useMemo, useState, useRef } from "react";
-import * as maplibregl from "maplibre-gl";
+import { lazy, Suspense, useEffect, useMemo, useState, useRef } from "react";
+import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   Activity,
-  ArrowDownRight,
   ArrowRight,
-  ArrowUpRight,
   Atom,
   Boxes,
   ChevronRight,
-  CircleDollarSign,
   Clock3,
   Cloud,
   Gauge,
@@ -20,27 +17,15 @@ import {
   MapPin,
   Navigation,
   Network,
-  PackageCheck,
   Plus,
   Route as RouteIcon,
   Satellite,
   Settings2,
   Sparkles,
-  Target,
   Trash2,
   Truck,
   Zap,
 } from "lucide-react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -57,26 +42,10 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { AREAS, areaMeta, compareRoutes, geocode, jobStreamUrl, loadGraph, startRouteJob, type AreaId, type CompareResponse } from "@/lib/api";
 
 type View = "home" | "compare" | "fleet";
-
-const convergenceData = [
-  { i: 0, qpso: 96, baseline: 96 },
-  { i: 10, qpso: 73, baseline: 85 },
-  { i: 20, qpso: 49, baseline: 76 },
-  { i: 30, qpso: 32, baseline: 69 },
-  { i: 40, qpso: 21, baseline: 63 },
-  { i: 50, qpso: 14, baseline: 59 },
-];
-
-const gapData = [
-  { i: "08:00", gap: 12.8 },
-  { i: "10:00", gap: 9.2 },
-  { i: "12:00", gap: 6.7 },
-  { i: "14:00", gap: 4.1 },
-  { i: "16:00", gap: 2.4 },
-  { i: "18:00", gap: 1.6 },
-];
+const MiniChart = lazy(() => import("./mini-chart"));
 
 function Logo() {
   return (
@@ -187,7 +156,7 @@ function HomeView({ onChange }: { onChange: (view: View) => void }) {
           </Button>
         </div>
         <div className="mx-auto mt-12 grid max-w-2xl grid-cols-3 divide-x divide-border/70 border-y border-border/60 py-4">
-          {[["32%", "fewer kilometers"], ["18%", "lower costs"], ["2.4×", "faster planning"]].map(([value, label]) => (
+          {[["Mumbai", "road network"], ["QPSO", "fleet optimizer"], ["Live", "route metrics"]].map(([value, label]) => (
             <div key={label} className="px-2">
               <div className="font-mono text-lg font-semibold text-foreground sm:text-2xl">{value}</div>
               <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground sm:text-xs">{label}</div>
@@ -206,7 +175,8 @@ function MapCanvas({
   traffic = false, 
   nodes = true, 
   fleet = false,
-  routeData = null
+  routeData = null,
+  areaId = "bkc",
 }: { 
   baseline?: boolean; 
   qpso?: boolean; 
@@ -214,26 +184,52 @@ function MapCanvas({
   nodes?: boolean; 
   fleet?: boolean;
   routeData?: any;
+  areaId?: AreaId;
 }) {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<maplibregl.Map | null>(null);
+  const map = useRef<MapLibreMap | null>(null);
+  const maplibre = useRef<typeof import("maplibre-gl") | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
-    if (map.current || !mapContainer.current) return;
-    
-    map.current = new maplibregl.Map({
-      container: mapContainer.current,
-      style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-      center: [77.5946, 12.9716], // Bengaluru
-      zoom: 11
-    });
+    let disposed = false;
+    import("maplibre-gl").then((maplibreModule) => {
+      if (disposed || !mapContainer.current) return;
+      maplibre.current = maplibreModule;
+      const instance = new maplibreModule.Map({
+        container: mapContainer.current,
+        style: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+        center: [areaMeta("bkc").center.lon, areaMeta("bkc").center.lat],
+        zoom: 11
+      });
+      map.current = instance;
+      instance.once("load", () => {
+        if (!disposed) setMapReady(true);
+      });
+    }).catch((cause: unknown) => console.error("Could not load the map engine", cause));
+
+    return () => {
+      disposed = true;
+      map.current?.remove();
+      map.current = null;
+      maplibre.current = null;
+      setMapReady(false);
+    };
   }, []);
 
   useEffect(() => {
-    if (!map.current || !routeData) return;
+    const center = areaMeta(areaId).center;
+    map.current?.setCenter([center.lon, center.lat]);
+  }, [areaId, mapReady]);
+
+  useEffect(() => {
+    const maplibreModule = maplibre.current;
+    if (!map.current || !mapReady || !routeData || !maplibreModule) return;
 
     const sourceId = 'optimized-routes';
-    const features = routeData.routes.map((route: any, idx: number) => {
+    const features = routeData.routes
+      .filter((route: any) => route.kind === "baseline" ? baseline : route.kind === "qpso" ? qpso : true)
+      .map((route: any, idx: number) => {
         let coordinates = [];
         if (route.polyline && route.polyline.length > 0) {
             coordinates = route.polyline.map((coord: any) => [coord[1], coord[0]]); // GeoJSON expects [lon, lat]
@@ -251,7 +247,7 @@ function MapCanvas({
     });
 
     if (map.current.getSource(sourceId)) {
-        (map.current.getSource(sourceId) as maplibregl.GeoJSONSource).setData({
+        (map.current.getSource(sourceId) as GeoJSONSource).setData({
             type: 'FeatureCollection',
             features: features as any
         });
@@ -296,7 +292,7 @@ function MapCanvas({
     }
     
     if (routeData.routes.length > 0) {
-        const bounds = new maplibregl.LngLatBounds();
+        const bounds = new maplibreModule.LngLatBounds();
         routeData.routes.forEach((r: any) => {
             if (r.polyline && r.polyline.length > 0) {
                 r.polyline.forEach((coord: any) => {
@@ -313,13 +309,13 @@ function MapCanvas({
         }
     }
 
-  }, [routeData]);
+  }, [routeData, baseline, qpso, mapReady]);
 
   return (
     <div className="relative h-full min-h-[280px] overflow-hidden rounded-md border border-border bg-map shadow-panel">
       <div ref={mapContainer} className="absolute inset-0" />
       <div className="absolute left-5 top-5 z-10 flex items-center gap-2 rounded-md border border-border bg-surface/80 px-3 py-2 text-xs text-muted-foreground backdrop-blur-md">
-        <Satellite className="size-3.5 text-primary" /> Bengaluru network · live
+        <Satellite className="size-3.5 text-primary" /> {areaMeta(areaId).label} network
       </div>
     </div>
   );
@@ -337,12 +333,71 @@ function Field({ label, icon: Icon, value, onChange, placeholder }: { label: str
   );
 }
 
+function comparisonPolyline(route: CompareResponse["baseline"]): number[][] {
+  return route.geometry.geometry.coordinates.flatMap((coordinate) => {
+    if (typeof coordinate === "string") {
+      const [lon, lat] = coordinate.trim().split(/\s+/).map(Number);
+      return Number.isFinite(lat) && Number.isFinite(lon) ? [[lat!, lon!]] : [];
+    }
+    return coordinate.length >= 2 ? [[coordinate[1]!, coordinate[0]!]] : [];
+  });
+}
+
 function CompareView() {
-  const [source, setSource] = useState("Indiranagar, Bengaluru");
-  const [destination, setDestination] = useState("Electronic City, Bengaluru");
-  const [stops, setStops] = useState(["Koramangala 5th Block"]);
+  const areaId: AreaId = "bkc";
+  const [source, setSource] = useState("Bandra Kurla Complex, Mumbai");
+  const [destination, setDestination] = useState("Santacruz East, Mumbai");
+  const [stops, setStops] = useState<string[]>([]);
   const [baseline, setBaseline] = useState(true);
   const [qpso, setQpso] = useState(true);
+  const [comparison, setComparison] = useState<CompareResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const recalculate = async () => {
+    setLoading(true);
+    setError("");
+    setComparison(null);
+    try {
+      await loadGraph(areaId);
+      const sourcePoint = await geocode(source, areaId);
+      if (!sourcePoint) throw new Error(`Could not find “${source}” in BKC, Mumbai.`);
+      const destinationPoint = await geocode(destination, areaId);
+      if (!destinationPoint) throw new Error(`Could not find “${destination}” in BKC, Mumbai.`);
+      const stopPoints: Array<{ lat: number; lon: number }> = [];
+      for (const stop of stops.filter((value) => value.trim())) {
+        const point = await geocode(stop, areaId);
+        if (!point) throw new Error(`Could not find “${stop}” in BKC, Mumbai.`);
+        stopPoints.push({ lat: point.lat, lon: point.lon });
+      }
+      const result = await compareRoutes({
+        area: areaId,
+        source: { lat: sourcePoint.lat, lon: sourcePoint.lon },
+        destination: { lat: destinationPoint.lat, lon: destinationPoint.lon },
+        stops: stopPoints,
+      });
+      setComparison(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not compare these routes.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const distanceChange = comparison
+    ? ((comparison.baseline.distance_km - comparison.ours.distance_km) / Math.max(comparison.baseline.distance_km, 0.001)) * 100
+    : null;
+  const distanceLabel = distanceChange === null
+    ? "Run comparison"
+    : Math.abs(distanceChange) < 0.05
+      ? "SAME DISTANCE"
+      : `${Math.abs(distanceChange).toFixed(1)}% ${distanceChange > 0 ? "SAVED" : "LONGER"}`;
+  const compareMapData = comparison ? {
+    routes: [
+      { kind: "baseline", polyline: comparisonPolyline(comparison.baseline) },
+      { kind: "qpso", polyline: comparisonPolyline(comparison.ours) },
+    ],
+  } : null;
 
   return (
     <section className="grid h-full min-h-0 gap-4 overflow-hidden p-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:p-5">
@@ -365,14 +420,15 @@ function CompareView() {
               ))}
               <Button variant="outline" size="sm" disabled={stops.length >= 4} onClick={() => setStops([...stops, ""])} className="border-dashed border-border bg-transparent text-muted-foreground"><Plus /> Add stop</Button>
             </div>
-            <Button className="h-10 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90"><Sparkles /> Recalculate comparison</Button>
+            <Button onClick={recalculate} disabled={loading} className="h-10 bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">{loading ? <><Activity className="animate-spin" /> Looking up routes</> : <><Sparkles /> Recalculate comparison</>}</Button>
           </div>
+          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
           <div className="border-t border-border pt-5">
-            <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-foreground">Comparison Metrics</h2><span className="rounded-sm bg-status/10 px-2 py-1 text-[10px] font-semibold text-status">18.4% SAVED</span></div>
+            <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-foreground">Comparison Metrics</h2><span className="rounded-sm bg-status/10 px-2 py-1 text-[10px] font-semibold text-status">{distanceLabel}</span></div>
             <div className="grid grid-cols-[1fr_auto_1fr] gap-2 rounded-md border border-border bg-muted/40 p-3">
-              <MetricColumn label="Baseline" distance="28.7" time="64" tone="baseline" />
+              <MetricColumn label="Baseline" distance={comparison?.baseline.distance_km.toFixed(1) ?? "—"} time={comparison?.baseline.time_min.toFixed(0) ?? "—"} tone="baseline" />
               <div className="w-px bg-border" />
-              <MetricColumn label="Our Route" distance="23.4" time="49" tone="primary" />
+              <MetricColumn label="Fastest Route" distance={comparison?.ours.distance_km.toFixed(1) ?? "—"} time={comparison?.ours.time_min.toFixed(0) ?? "—"} tone="primary" />
             </div>
             <div className="mt-3 space-y-2">
               <RouteToggle label="Baseline (Conventional)" checked={baseline} onCheckedChange={setBaseline} tone="baseline" />
@@ -381,7 +437,7 @@ function CompareView() {
           </div>
         </div>
       </ScrollArea>
-      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} qpso={qpso} /></div>
+      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} qpso={qpso} routeData={compareMapData} areaId={areaId} /></div>
     </section>
   );
 }
@@ -394,42 +450,56 @@ function RouteToggle({ label, checked, onCheckedChange, tone }: { label: string;
   return <div className="flex items-center justify-between rounded-md border border-border/70 bg-muted/30 px-3 py-2.5"><span className="flex items-center gap-2 text-xs text-foreground"><span className={cn("size-2 rounded-full", tone === "primary" ? "bg-primary shadow-neon-cyan" : "bg-baseline")} />{label}</span><Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={`Show ${label}`} /></div>;
 }
 
-const statDefinitions = [
-  { label: "Deliveries Done", value: "1,284", icon: PackageCheck, trend: "+12.4%", positive: true },
-  { label: "Fleet Utilisation", value: "87.6%", icon: Gauge, trend: "+5.2%", positive: true },
-  { label: "Total Distance", value: "3,842 km", icon: Navigation, trend: "−8.1%", positive: true },
-  { label: "CO₂ Saved", value: "426 kg", icon: Leaf, trend: "+18.7%", positive: true },
-  { label: "Est. Operating Cost", value: "₹68,420", icon: CircleDollarSign, trend: "−6.3%", positive: true },
-];
-
 function FleetView() {
-  const [stops, setStops] = useState([10]);
+  const [areaId, setAreaId] = useState<AreaId>("bkc");
+  const [stopLocations, setStopLocations] = useState<string[]>([areaMeta("bkc").label]);
   const [fleet, setFleet] = useState([3]);
   const [traffic, setTraffic] = useState(true);
   const [nodes, setNodes] = useState(true);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(100);
-  const [run, setRun] = useState(18);
+  const [run, setRun] = useState(0);
   const [routeData, setRouteData] = useState<any>(null);
-  const stopCount = stops[0] ?? 1;
+  const [error, setError] = useState("");
+  const stopCount = stopLocations.length;
   const fleetCount = fleet[0] ?? 1;
+  const routeStats = routeData ? [
+    { label: "Total Distance", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.distance_km, 0).toFixed(1)} km`, icon: Navigation },
+    { label: "Travel Time", value: `${routeData.routes.reduce((sum: number, route: any) => sum + route.travel_time_min, 0).toFixed(0)} min`, icon: Clock3 },
+    { label: "Vehicles Used", value: `${routeData.routes.filter((route: any) => route.stop_count > 0).length}`, icon: Truck },
+    { label: "CO₂ Emissions", value: routeData.emissions ? `${routeData.emissions.total_co2_kg.toFixed(2)} kg` : "—", icon: Leaf },
+    { label: "Solve Time", value: `${routeData.elapsed_s.toFixed(2)} s`, icon: Gauge },
+  ] : [
+    { label: "Total Distance", value: "—", icon: Navigation },
+    { label: "Travel Time", value: "—", icon: Clock3 },
+    { label: "Vehicles Used", value: "—", icon: Truck },
+    { label: "CO₂ Emissions", value: "—", icon: Leaf },
+    { label: "Solve Time", value: "—", icon: Gauge },
+  ];
 
   const optimize = async () => { 
     setRunning(true);
     setProgress(0);
     setRouteData(null);
+    setError("");
     
     try {
-        const depot = { lat: 12.9716, lon: 77.5946 };
-        const generatedStops = Array.from({length: stopCount}).map((_, i) => ({
-            id: i + 1,
-            lat: depot.lat + (Math.random() - 0.5) * 0.1,
-            lon: depot.lon + (Math.random() - 0.5) * 0.1,
+        const depot = areaMeta(areaId).center;
+        await loadGraph(areaId);
+        const resolvedStops: Array<{ id: number; lat: number; lon: number; demand: number; service_time_min: number }> = [];
+        for (const [index, location] of stopLocations.entries()) {
+            if (!location.trim()) throw new Error(`Enter a location for stop ${index + 1}.`);
+            const hit = await geocode(location, areaId);
+            if (!hit) throw new Error(`Could not find “${location}” in ${areaMeta(areaId).label}.`);
+            resolvedStops.push({
+            id: index + 1,
+            lat: hit.lat,
+            lon: hit.lon,
             demand: 1,
-            tw_start: 8.0,
-            tw_end: 18.0,
-            service_time: 15.0
-        }));
+            service_time_min: 15.0
+            });
+            setProgress(Math.round(((index + 1) / stopLocations.length) * 10));
+        }
 
         const generatedVehicles = Array.from({length: fleetCount}).map((_, i) => ({
             id: i + 1,
@@ -439,25 +509,23 @@ function FleetView() {
             cost_per_hour: 200.0
         }));
 
-        const response = await fetch("http://localhost:8000/route/job", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+        const { job_id: jobId } = await startRouteJob({
                 depot_lat: depot.lat,
                 depot_lon: depot.lon,
-                stops: generatedStops,
+                stops: resolvedStops,
                 vehicles: generatedVehicles,
                 qpso_config: { max_iterations: 50, population_size: 40 }
-            })
         });
-        const data = await response.json();
-        const jobId = data.job_id;
         
-        const eventSource = new EventSource(`http://localhost:8000/route/job/${jobId}/stream`);
+        const eventSource = new EventSource(jobStreamUrl(jobId));
         eventSource.onmessage = (event) => {
             const parsed = JSON.parse(event.data);
-            if (parsed.status === "optimizing") {
-                setProgress(Math.floor((parsed.iteration / 50) * 100));
+            if (typeof parsed.iteration === "number") {
+                setProgress(Math.max(10, Math.floor((parsed.iteration / 50) * 100)));
+            } else if (parsed.status === "failed") {
+                setError(parsed.error ?? "Route optimization failed.");
+                setRunning(false);
+                eventSource.close();
             } else if (parsed.status === "completed") {
                 setRouteData(parsed.result);
                 setProgress(100);
@@ -467,11 +535,13 @@ function FleetView() {
             }
         };
         eventSource.onerror = () => {
+            setError("The optimization stream disconnected before finishing.");
             setRunning(false);
             eventSource.close();
         };
     } catch (e) {
         console.error(e);
+        setError(e instanceof Error ? e.message : "Could not optimize these locations.");
         setRunning(false);
     }
   };
@@ -479,13 +549,7 @@ function FleetView() {
   return (
     <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 lg:gap-4 lg:p-5">
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5 lg:gap-3">
-        {(routeData ? [
-    { label: "Total Distance", value: `${routeData.metrics.total_distance_km.toFixed(1)} km`, icon: Navigation, trend: "-18%", positive: true },
-    { label: "Avg Delivery Time", value: `${Math.floor(routeData.metrics.total_distance_km * 2)} min`, icon: Clock3, trend: "-12%", positive: true },
-    { label: "Fleet Utilisation", value: "100%", icon: Gauge, trend: "+5.2%", positive: true },
-    { label: "Est. Operating Cost", value: `₹${Math.floor(routeData.metrics.total_distance_km * 15)}`, icon: CircleDollarSign, trend: "−6.3%", positive: true },
-    { label: "Deliveries Done", value: stopCount.toString(), icon: PackageCheck, trend: "live", positive: true }
-] : statDefinitions).map((stat, index) => <StatCard key={stat.label} {...stat} value={index === 0 && run > 18 && !routeData ? "1,326" : stat.value} />)}
+        {routeStats.map((stat) => <StatCard key={stat.label} {...stat} />)}
       </div>
       <div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[340px_minmax(0,1fr)] lg:gap-4">
         <Card className="min-h-0 overflow-hidden rounded-md border-border bg-card/70 shadow-panel backdrop-blur-md">
@@ -496,9 +560,24 @@ function FleetView() {
             </TabsList>
             <TabsContent value="controls" className="mt-0 min-h-0 flex-1 overflow-hidden">
               <ScrollArea className="h-full"><div className="space-y-5 p-5">
-                <SelectField label="City Selection" defaultValue="bengaluru" options={[["bengaluru", "Bengaluru, KA"], ["mumbai", "Mumbai, MH"], ["delhi", "New Delhi, DL"]]} />
+                <SelectField label="Service Area" value={areaId} onValueChange={(value) => {
+                  const nextArea = value as AreaId;
+                  if (stopLocations.length === 1 && stopLocations[0] === areaMeta(areaId).label) {
+                    setStopLocations([areaMeta(nextArea).label]);
+                  }
+                  setAreaId(nextArea);
+                }} options={AREAS.map(({ id, label }) => [id, label])} />
                 <SelectField label="Algorithm" defaultValue="qpso" options={[["qpso", "QPSO — Quantum Swarm"], ["ga", "GA — Genetic Algorithm"], ["aco", "ACO — Ant Colony"]]} />
-                <ControlSlider label="Number of Stops" value={stops} onValueChange={setStops} min={1} max={100} suffix="locations" />
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between text-xs font-medium text-muted-foreground"><span>Delivery Locations</span><span>{stopCount}/15</span></div>
+                  {stopLocations.map((location, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input aria-label={`Delivery location ${index + 1}`} value={location} onChange={(event) => setStopLocations(stopLocations.map((item, i) => i === index ? event.target.value : item))} placeholder="Search a Mumbai address" className="h-9 border-border bg-input/40" />
+                      <Button aria-label={`Remove delivery location ${index + 1}`} title="Remove location" size="icon" variant="ghost" disabled={stopLocations.length === 1} onClick={() => setStopLocations(stopLocations.filter((_, i) => i !== index))} className="shrink-0 text-muted-foreground hover:text-destructive"><Trash2 /></Button>
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" disabled={stopCount >= 15} onClick={() => setStopLocations([...stopLocations, ""])} className="border-dashed border-border bg-transparent text-muted-foreground"><Plus /> Add delivery location</Button>
+                </div>
                 <ControlSlider label="Fleet Size" value={fleet} onValueChange={setFleet} min={1} max={15} suffix="vehicles" />
                 <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
                   <div className="mb-2 flex items-center justify-between"><span>Search complexity</span><span className="font-mono text-foreground">{(stopCount * fleetCount).toLocaleString()} nodes</span></div>
@@ -507,43 +586,51 @@ function FleetView() {
                 <Button onClick={optimize} disabled={running} className="h-11 w-full bg-primary text-primary-foreground shadow-neon-cyan hover:bg-primary/90">
                   {running ? <><Activity className="animate-spin" /> Optimizing {progress}%</> : <><Zap /> Run Optimization <ChevronRight /></>}
                 </Button>
+                {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
               </div></ScrollArea>
             </TabsContent>
             <TabsContent value="analytics" className="mt-0 min-h-0 flex-1 overflow-hidden">
-              <ScrollArea className="h-full"><div className="space-y-4 p-4"><MiniChart title="Convergence" subtitle="Fitness score by iteration" data={convergenceData} dataKey="qpso" color="var(--primary)" /><MiniChart title="Optimality Gap" subtitle="Deviation from best known route" data={gapData} dataKey="gap" color="var(--quantum)" /></div></ScrollArea>
+              <ScrollArea className="h-full"><div className="space-y-4 p-4">
+                <Suspense fallback={<p className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">Loading analytics…</p>}>
+                  {routeData?.convergence?.length ? <MiniChart title="Convergence" subtitle="Best fitness by iteration" data={routeData.convergence.map((value: number, i: number) => ({ i, value }))} dataKey="value" color="var(--primary)" /> : <p className="rounded-md border border-border bg-muted/30 p-4 text-xs text-muted-foreground">Run an optimization to see its convergence data.</p>}
+                  {routeData?.diversity?.length ? <MiniChart title="Population Diversity" subtitle="Swarm diversity by iteration" data={routeData.diversity.map((value: number, i: number) => ({ i, value }))} dataKey="value" color="var(--quantum)" /> : null}
+                </Suspense>
+              </div></ScrollArea>
             </TabsContent>
           </Tabs>
         </Card>
         <div className="relative min-h-[300px] min-w-0">
-          <MapCanvas baseline={false} qpso traffic={traffic} nodes={nodes} fleet routeData={routeData} />
+          <MapCanvas baseline={false} qpso traffic={traffic} nodes={nodes} fleet routeData={routeData} areaId={areaId} />
           <div className="absolute right-3 top-3 z-20 w-48 rounded-md border border-border bg-surface/80 p-3 shadow-panel backdrop-blur-md sm:right-4 sm:top-4">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"><Network className="size-3.5 text-primary" /> Map layers</div>
             <MapSwitch icon={Cloud} label="Live Traffic" checked={traffic} onCheckedChange={setTraffic} />
             <MapSwitch icon={Boxes} label="Show Nodes" checked={nodes} onCheckedChange={setNodes} />
           </div>
-          <div className="absolute bottom-4 right-4 z-20 rounded-md border border-border bg-surface/80 px-3 py-2 font-mono text-[10px] text-muted-foreground backdrop-blur-md">RUN #{run} · {running ? `SOLVING ${progress}%` : "OPTIMAL"}</div>
+          <div className="absolute bottom-4 right-4 z-20 rounded-md border border-border bg-surface/80 px-3 py-2 font-mono text-[10px] text-muted-foreground backdrop-blur-md">RUN #{run || 1} · {running ? `SOLVING ${progress}%` : routeData ? "COMPLETE" : "READY"}</div>
         </div>
       </div>
     </section>
   );
 }
 
-function StatCard({ label, value, icon: Icon, trend, positive }: { label: string; value: string; icon: typeof Gauge; trend: string; positive: boolean }) {
-  const Trend = positive ? ArrowUpRight : ArrowDownRight;
-  return <Card className="group overflow-hidden rounded-md border-border bg-card/70 p-3 shadow-panel backdrop-blur-md transition-colors hover:border-primary/30 lg:p-4"><div className="flex items-start justify-between gap-2"><div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Icon className="size-4" /></div><span className="flex items-center gap-0.5 text-[10px] font-medium text-status"><Trend className="size-3" />{trend}</span></div><div className="mt-3 truncate font-mono text-lg font-semibold text-foreground lg:text-xl">{value}</div><div className="mt-1 truncate text-[10px] uppercase tracking-[0.1em] text-muted-foreground">{label}</div></Card>;
+function StatCard({ label, value, icon: Icon }: { label: string; value: string; icon: typeof Gauge }) {
+  return <Card className="group overflow-hidden rounded-md border-border bg-card/70 p-3 shadow-panel backdrop-blur-md transition-colors hover:border-primary/30 lg:p-4"><div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="mt-3 truncate font-mono text-lg font-semibold text-foreground lg:text-xl">{value}</div><div className="mt-1 truncate text-[10px] uppercase tracking-[0.1em] text-muted-foreground">{label}</div></Card>;
 }
 
-function SelectField({ label, defaultValue, options }: { label: string; defaultValue: string; options: Array<[string, string]> }) {
-  return <label className="grid gap-2 text-xs font-medium text-muted-foreground">{label}<Select defaultValue={defaultValue}><SelectTrigger className="h-10 border-border bg-input/40 text-foreground"><SelectValue /></SelectTrigger><SelectContent>{options.map(([value, text]) => <SelectItem key={value} value={value}>{text}</SelectItem>)}</SelectContent></Select></label>;
+type SelectFieldProps =
+  | { label: string; value: string; onValueChange: (value: string) => void; options: Array<[string, string]> }
+  | { label: string; defaultValue: string; options: Array<[string, string]> };
+
+function SelectField(props: SelectFieldProps) {
+  const { label, options } = props;
+  const selectProps = "value" in props
+    ? { value: props.value, onValueChange: props.onValueChange }
+    : { defaultValue: props.defaultValue };
+  return <label className="grid gap-2 text-xs font-medium text-muted-foreground">{label}<Select {...selectProps}><SelectTrigger className="h-10 border-border bg-input/40 text-foreground"><SelectValue /></SelectTrigger><SelectContent>{options.map(([optionValue, text]) => <SelectItem key={optionValue} value={optionValue}>{text}</SelectItem>)}</SelectContent></Select></label>;
 }
 
 function ControlSlider({ label, value, onValueChange, min, max, suffix }: { label: string; value: number[]; onValueChange: (value: number[]) => void; min: number; max: number; suffix: string }) {
   return <div className="grid gap-3"><div className="flex items-end justify-between"><label className="text-xs font-medium text-muted-foreground">{label}</label><span className="font-mono text-lg font-semibold text-foreground">{value[0]} <span className="text-[10px] font-normal text-muted-foreground">{suffix}</span></span></div><Slider value={value} onValueChange={onValueChange} min={min} max={max} step={1} aria-label={label} /><div className="flex justify-between font-mono text-[9px] text-muted-foreground"><span>{min}</span><span>{max}</span></div></div>;
-}
-
-function MiniChart({ title, subtitle, data, dataKey, color }: { title: string; subtitle: string; data: Array<Record<string, string | number>>; dataKey: string; color: string }) {
-  const gradientId = `gradient-${dataKey}`;
-  return <div className="rounded-md border border-border bg-muted/30 p-3"><div className="mb-3"><div className="text-xs font-semibold text-foreground">{title}</div><div className="mt-0.5 text-[10px] text-muted-foreground">{subtitle}</div></div><div className="h-40"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data} margin={{ top: 5, right: 4, left: -28, bottom: 0 }}><defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={color} stopOpacity={0.35} /><stop offset="1" stopColor={color} stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} /><XAxis dataKey="i" stroke="var(--muted-foreground)" fontSize={9} tickLine={false} axisLine={false} /><YAxis stroke="var(--muted-foreground)" fontSize={9} tickLine={false} axisLine={false} /><RechartsTooltip contentStyle={{ background: "var(--popover)", border: "1px solid var(--border)", borderRadius: "6px", fontSize: "11px" }} /><Area type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2} fill={`url(#${gradientId})`} /></AreaChart></ResponsiveContainer></div></div>;
 }
 
 function MapSwitch({ icon: Icon, label, checked, onCheckedChange }: { icon: typeof Cloud; label: string; checked: boolean; onCheckedChange: (checked: boolean) => void }) {
