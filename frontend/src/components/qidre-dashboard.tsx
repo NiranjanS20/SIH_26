@@ -22,6 +22,7 @@ import {
   LocateFixed,
   Map,
   MapPin,
+  Moon,
   Navigation,
   Network,
   Plus,
@@ -122,7 +123,17 @@ const navigation: Array<{ id: View; label: string; icon: typeof Map }> = [
   { id: "operations", label: "Weather & Wellbeing", icon: HeartHandshake },
 ];
 
-function TopNav({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+function TopNav({
+  view,
+  onChange,
+  theme,
+  onToggleTheme,
+}: {
+  view: View;
+  onChange: (view: View) => void;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
+}) {
   return (
     <header className="relative z-30 flex h-[68px] shrink-0 items-center justify-between border-b border-border/70 bg-surface/70 px-4 backdrop-blur-md sm:px-6 lg:px-8">
       <Logo />
@@ -150,12 +161,35 @@ function TopNav({ view, onChange }: { view: View; onChange: (view: View) => void
           );
         })}
       </nav>
-      <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
-        <span className="relative flex size-2">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-status opacity-60" />
-          <span className="relative inline-flex size-2 rounded-full bg-status" />
-        </span>
-        Systems nominal
+      <div className="flex items-center gap-2.5 sm:gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onToggleTheme}
+          className="h-8 gap-1.5 border-border/70 bg-muted/40 px-2.5 text-xs text-foreground hover:bg-accent/60"
+          title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          aria-label="Toggle color theme"
+        >
+          {theme === "dark" ? (
+            <>
+              <Sun className="size-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Light</span>
+            </>
+          ) : (
+            <>
+              <Moon className="size-3.5 text-cyan-600" />
+              <span className="hidden sm:inline">Dark</span>
+            </>
+          )}
+        </Button>
+        <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
+          <span className="relative flex size-2">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-status opacity-60" />
+            <span className="relative inline-flex size-2 rounded-full bg-status" />
+          </span>
+          Systems nominal
+        </div>
       </div>
     </header>
   );
@@ -233,6 +267,7 @@ function MapCanvas({
   fleet,
   routeData,
   areaId = "bkc",
+  theme = "dark",
 }: {
   baseline?: boolean;
   optimized?: boolean;
@@ -242,11 +277,20 @@ function MapCanvas({
   fleet?: boolean;
   routeData?: any;
   areaId?: AreaId;
+  theme?: "dark" | "light";
 }) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
   const maplibre = useRef<typeof import("maplibre-gl") | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const markersRef = useRef<any[]>([]);
+  const drawnLayersRef = useRef<string[]>([]);
+  const drawnSourcesRef = useRef<string[]>([]);
+
+  const getTileUrl = (th: "dark" | "light") =>
+    th === "dark"
+      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+      : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 
   useEffect(() => {
     let disposed = false;
@@ -254,19 +298,18 @@ function MapCanvas({
       if (disposed || !mapContainer.current) return;
       maplibre.current = maplibreModule;
       const initialCenter = areaMeta(areaId).center;
+      const initialTile = getTileUrl(theme);
+
       const instance = new maplibreModule.Map({
         container: mapContainer.current,
         style: {
           version: 8,
           sources: {
-            carto: {
+            "basemap-tiles": {
               type: "raster",
-              tiles: [
-                "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png",
-                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-              ],
+              tiles: [initialTile],
               tileSize: 256,
-              attribution: "© OpenStreetMap contributors, © CARTO",
+              attribution: "© OpenStreetMap contributors, © Esri",
             },
             "live-traffic": {
               type: "geojson",
@@ -274,7 +317,7 @@ function MapCanvas({
             },
           },
           layers: [
-            { id: "carto-tiles", type: "raster", source: "carto" },
+            { id: "basemap-layer", type: "raster", source: "basemap-tiles" },
             {
               id: "live-traffic",
               type: "line",
@@ -296,10 +339,10 @@ function MapCanvas({
         center: [initialCenter.lon, initialCenter.lat],
         zoom: 12,
       });
+
       map.current = instance;
       instance.on("error", (event) => {
-        // Log silently instead of interrupting user with permanent modal banner
-        console.warn("Map warning:", event.error?.message);
+        console.warn("Map notice:", event.error?.message);
       });
       instance.once("load", () => {
         if (!disposed) {
@@ -311,19 +354,51 @@ function MapCanvas({
 
     return () => {
       disposed = true;
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
       map.current?.remove();
       map.current = null;
       maplibre.current = null;
     };
   }, []);
 
+  // Update basemap when theme changes
+  useEffect(() => {
+    const instance = map.current;
+    if (!instance || !mapReady) return;
+    const tileUrl = getTileUrl(theme);
+    const source = instance.getSource("basemap-tiles") as any;
+    if (source && typeof source.setTiles === "function") {
+      source.setTiles([tileUrl]);
+    } else {
+      try {
+        if (instance.getLayer("basemap-layer")) instance.removeLayer("basemap-layer");
+        if (instance.getSource("basemap-tiles")) instance.removeSource("basemap-tiles");
+        instance.addSource("basemap-tiles", {
+          type: "raster",
+          tiles: [tileUrl],
+          tileSize: 256,
+          attribution: "© OpenStreetMap contributors, © Esri",
+        });
+        instance.addLayer(
+          { id: "basemap-layer", type: "raster", source: "basemap-tiles" },
+          instance.getLayer("live-traffic") ? "live-traffic" : undefined,
+        );
+      } catch (err) {
+        console.warn("Could not reload basemap tile source:", err);
+      }
+    }
+  }, [theme, mapReady]);
+
+  // Center on area change
   useEffect(() => {
     const center = areaMeta(areaId).center;
-    if (map.current) {
+    if (map.current && mapReady) {
       map.current.flyTo({ center: [center.lon, center.lat], zoom: 12, essential: true });
     }
   }, [areaId, mapReady]);
 
+  // Update live traffic
   useEffect(() => {
     const trafficSource = map.current?.getSource("live-traffic") as GeoJSONSource | undefined;
     if (!trafficSource || !mapReady) return;
@@ -350,70 +425,186 @@ function MapCanvas({
     map.current.setLayoutProperty("live-traffic", "visibility", showTraffic ? "visible" : "none");
   }, [showTraffic, mapReady]);
 
+  // Route & Markers rendering
   useEffect(() => {
     const instance = map.current;
-    if (!instance || !mapReady) return;
+    const ml = maplibre.current;
+    if (!instance || !ml || !mapReady) return;
 
-    // Clear previous route layers
-    ["route-baseline", "route-optimized", "fleet-layer-0", "fleet-layer-1", "fleet-layer-2", "fleet-layer-3"].forEach((layerId) => {
-      if (instance.getLayer(layerId)) instance.removeLayer(layerId);
-      if (instance.getSource(layerId)) instance.removeSource(layerId);
+    // Clean previous route layers
+    drawnLayersRef.current.forEach((id) => {
+      try {
+        if (instance.getLayer(id)) instance.removeLayer(id);
+      } catch {}
     });
+    drawnLayersRef.current = [];
 
+    // Clean previous route sources
+    drawnSourcesRef.current.forEach((id) => {
+      try {
+        if (instance.getSource(id)) instance.removeSource(id);
+      } catch {}
+    });
+    drawnSourcesRef.current = [];
+
+    // Clean previous markers
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+
+    const allCoords: [number, number][] = [];
+
+    // Fleet Routes rendering
     if (routeData?.routes && fleet) {
-      const colors = ["#06b6d4", "#a855f7", "#ec4899", "#f59e0b"];
+      const colors = ["#06b6d4", "#a855f7", "#10b981", "#f59e0b", "#ec4899", "#3b82f6"];
       routeData.routes.forEach((r: any, idx: number) => {
         if (!r.polyline || r.polyline.length < 2) return;
-        const sourceId = `fleet-layer-${idx}`;
+        const coords: [number, number][] = r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]);
+        coords.forEach((c) => allCoords.push(c));
+
+        const sourceId = `fleet-source-${idx}`;
+        const layerGlowId = `fleet-glow-${idx}`;
+        const layerCoreId = `fleet-core-${idx}`;
+        const color = colors[idx % colors.length];
+
         instance.addSource(sourceId, {
           type: "geojson",
           data: {
             type: "Feature",
             properties: {},
-            geometry: {
-              type: "LineString",
-              coordinates: r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]),
-            },
+            geometry: { type: "LineString", coordinates: coords },
           },
         });
+        drawnSourcesRef.current.push(sourceId);
+
+        // Glow casing for high visibility
         instance.addLayer({
-          id: sourceId,
+          id: layerGlowId,
           type: "line",
           source: sourceId,
           paint: {
-            "line-color": colors[idx % colors.length],
-            "line-width": 4,
-            "line-opacity": 0.85,
+            "line-color": color,
+            "line-width": 8,
+            "line-opacity": 0.45,
+            "line-blur": 2,
           },
         });
+        drawnLayersRef.current.push(layerGlowId);
+
+        // Core route line
+        instance.addLayer({
+          id: layerCoreId,
+          type: "line",
+          source: sourceId,
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": color,
+            "line-width": 4.5,
+            "line-opacity": 0.95,
+          },
+        });
+        drawnLayersRef.current.push(layerCoreId);
       });
-    } else if (routeData?.routes && !fleet) {
-      routeData.routes.forEach((r: any) => {
+    }
+    // Compare Routes rendering
+    else if (routeData?.routes && !fleet) {
+      routeData.routes.forEach((r: any, idx: number) => {
         if (!r.polyline || r.polyline.length < 2) return;
         const isBaseline = r.kind === "baseline";
         if ((isBaseline && !baseline) || (!isBaseline && !optimized)) return;
-        const sourceId = isBaseline ? "route-baseline" : "route-optimized";
+
+        const coords: [number, number][] = r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]);
+        coords.forEach((c) => allCoords.push(c));
+
+        const sourceId = `compare-source-${idx}-${r.kind}`;
+        const layerGlowId = `compare-glow-${idx}-${r.kind}`;
+        const layerCoreId = `compare-core-${idx}-${r.kind}`;
+
         instance.addSource(sourceId, {
           type: "geojson",
           data: {
             type: "Feature",
             properties: {},
-            geometry: {
-              type: "LineString",
-              coordinates: r.polyline.map(([lat, lon]: [number, number]) => [lon, lat]),
-            },
+            geometry: { type: "LineString", coordinates: coords },
           },
         });
+        drawnSourcesRef.current.push(sourceId);
+
+        if (!isBaseline) {
+          instance.addLayer({
+            id: layerGlowId,
+            type: "line",
+            source: sourceId,
+            paint: {
+              "line-color": "#06b6d4",
+              "line-width": 8,
+              "line-opacity": 0.45,
+              "line-blur": 2,
+            },
+          });
+          drawnLayersRef.current.push(layerGlowId);
+        }
+
         instance.addLayer({
-          id: sourceId,
+          id: layerCoreId,
           type: "line",
           source: sourceId,
+          layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": isBaseline ? "#64748b" : "#06b6d4",
-            "line-width": isBaseline ? 3 : 5,
-            "line-opacity": 0.9,
+            "line-color": isBaseline ? "#94a3b8" : "#06b6d4",
+            "line-width": isBaseline ? 3.5 : 5,
+            "line-opacity": 0.95,
+            ...(isBaseline ? { "line-dasharray": [2, 2] } : {}),
           },
         });
+        drawnLayersRef.current.push(layerCoreId);
+      });
+    }
+
+    // Stop & Depot Markers
+    if (routeData?.points && Array.isArray(routeData.points)) {
+      routeData.points.forEach((pt: any) => {
+        if (!Number.isFinite(pt.lat) || !Number.isFinite(pt.lon)) return;
+        allCoords.push([pt.lon, pt.lat]);
+
+        const el = document.createElement("div");
+        el.className = "qidre-marker";
+        if (pt.type === "depot") {
+          el.innerHTML = `
+            <div style="background: #10b981; color: white; padding: 3px 8px; border-radius: 9999px; font-weight: 700; font-size: 10px; letter-spacing: 0.05em; box-shadow: 0 0 14px rgba(16,185,129,0.7); border: 2px solid white; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <span>🏭 DEPOT</span>
+            </div>`;
+        } else if (pt.type === "source") {
+          el.innerHTML = `
+            <div style="background: #10b981; color: white; width: 26px; height: 26px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px rgba(16,185,129,0.7); border: 2px solid white; cursor: pointer;">
+              A
+            </div>`;
+        } else if (pt.type === "destination") {
+          el.innerHTML = `
+            <div style="background: #f43f5e; color: white; width: 26px; height: 26px; border-radius: 50%; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px rgba(244,63,94,0.7); border: 2px solid white; cursor: pointer;">
+              B
+            </div>`;
+        } else {
+          el.innerHTML = `
+            <div style="background: #0ea5e9; color: white; width: 24px; height: 24px; border-radius: 50%; font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 10px rgba(14,165,233,0.6); border: 2px solid white; cursor: pointer;">
+              ${pt.label || "•"}
+            </div>`;
+        }
+
+        const marker = new ml.Marker({ element: el })
+          .setLngLat([pt.lon, pt.lat])
+          .addTo(instance);
+        markersRef.current.push(marker);
+      });
+    }
+
+    // Auto fit-bounds to frame the route immediately
+    if (allCoords.length > 0) {
+      const bounds = new ml.LngLatBounds();
+      allCoords.forEach((c) => bounds.extend(c));
+      instance.fitBounds(bounds, {
+        padding: { top: 70, bottom: 70, left: 70, right: 70 },
+        maxZoom: 15,
+        duration: 900,
       });
     }
   }, [routeData, baseline, optimized, fleet, mapReady]);
@@ -450,7 +641,7 @@ function comparisonPolyline(route: CompareResponse["baseline"]): number[][] {
   });
 }
 
-function CompareView() {
+function CompareView({ theme = "dark" }: { theme?: "dark" | "light" }) {
   const [areaId, setAreaId] = useState<AreaId>("bkc");
   const [source, setSource] = useState("Bandra Kurla Complex, Mumbai");
   const [destination, setDestination] = useState("Santacruz East, Mumbai");
@@ -458,12 +649,14 @@ function CompareView() {
   const [baseline, setBaseline] = useState(true);
   const [showFastest, setShowFastest] = useState(true);
   const [comparison, setComparison] = useState<CompareResponse | null>(null);
+  const [routePoints, setRoutePoints] = useState<Array<{ type: string; lat: number; lon: number; label: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleAreaChange = (newArea: AreaId) => {
     setAreaId(newArea);
     setComparison(null);
+    setRoutePoints([]);
     if (newArea === "borivali") {
       setSource("Western Edge, Borivali East, Mumbai");
       setDestination("Malad East, Mumbai");
@@ -489,6 +682,7 @@ function CompareView() {
     setLoading(true);
     setError("");
     setComparison(null);
+    setRoutePoints([]);
     try {
       const sourcePoint = await geocode(source, areaId);
       if (!sourcePoint) throw new Error(`Could not find “${source}”. Please check address or try a nearby landmark.`);
@@ -518,6 +712,11 @@ function CompareView() {
         stops: stopPoints,
       });
       setComparison(result);
+      setRoutePoints([
+        { type: "source", lat: sourcePoint.lat, lon: sourcePoint.lon, label: "A" },
+        ...stopPoints.map((p, i) => ({ type: "stop", lat: p.lat, lon: p.lon, label: `${i + 1}` })),
+        { type: "destination", lat: destinationPoint.lat, lon: destinationPoint.lon, label: "B" },
+      ]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not compare these routes.");
     } finally {
@@ -543,6 +742,7 @@ function CompareView() {
       { kind: "baseline", polyline: comparisonPolyline(comparison.baseline) },
       { kind: "fastest_time", polyline: comparisonPolyline(comparison.ours) },
     ],
+    points: routePoints,
   } : null;
 
   return (
@@ -591,7 +791,7 @@ function CompareView() {
           </div>
         </div>
       </ScrollArea>
-      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} optimized={showFastest} routeData={compareMapData} areaId={areaId} /></div>
+      <div className="min-h-[300px] min-w-0"><MapCanvas baseline={baseline} optimized={showFastest} routeData={compareMapData} areaId={areaId} theme={theme} /></div>
     </section>
   );
 }
@@ -604,7 +804,7 @@ function RouteToggle({ label, checked, onCheckedChange, tone }: { label: string;
   return <div className="flex items-center justify-between rounded-md border border-border/70 bg-muted/30 px-3 py-2.5"><span className="flex items-center gap-2 text-xs text-foreground"><span className={cn("size-2 rounded-full", tone === "primary" ? "bg-primary shadow-neon-cyan" : "bg-baseline")} />{label}</span><Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={`Show ${label}`} /></div>;
 }
 
-function FleetView() {
+function FleetView({ theme = "dark" }: { theme?: "dark" | "light" }) {
   const [areaId, setAreaId] = useState<AreaId>("bkc");
   const [stopLocations, setStopLocations] = useState<string[]>([areaMeta("bkc").label]);
   const [algorithm, setAlgorithm] = useState("qpso");
@@ -619,6 +819,7 @@ function FleetView() {
   const [progress, setProgress] = useState(100);
   const [run, setRun] = useState(0);
   const [routeData, setRouteData] = useState<any>(null);
+  const [fleetPoints, setFleetPoints] = useState<Array<{ type: string; lat: number; lon: number; label: string }>>([]);
   const [ecoMetrics, setEcoMetrics] = useState<any>(null);
   const [error, setError] = useState("");
   const stopCount = stopLocations.length;
@@ -696,6 +897,12 @@ function FleetView() {
         setProgress(Math.round(((index + 1) / stopLocations.length) * 10));
       }
 
+      const points = [
+        { type: "depot", lat: depot.lat, lon: depot.lon, label: "DEPOT" },
+        ...resolvedStops.map((s, i) => ({ type: "stop", lat: s.lat, lon: s.lon, label: `${i + 1}` })),
+      ];
+      setFleetPoints(points);
+
       const generatedVehicles = Array.from({ length: fleetCount }).map((_, i) => ({
         id: i + 1,
         capacity: 50,
@@ -726,7 +933,7 @@ function FleetView() {
           setRunning(false);
           eventSource.close();
         } else if (parsed.status === "completed") {
-          setRouteData(parsed.result);
+          setRouteData({ ...parsed.result, points });
           setProgress(100);
           setRunning(false);
           setRun((r) => r + 1);
@@ -835,7 +1042,7 @@ function FleetView() {
           </Tabs>
         </Card>
         <div className="relative min-h-[300px] min-w-0">
-          <MapCanvas baseline={false} showTraffic={trafficVisible} trafficSegments={trafficSegments} nodes={nodes} fleet routeData={routeData} areaId={areaId} />
+          <MapCanvas baseline={false} showTraffic={trafficVisible} trafficSegments={trafficSegments} nodes={nodes} fleet routeData={routeData} areaId={areaId} theme={theme} />
           <div className="absolute right-3 top-3 z-20 w-48 rounded-md border border-border bg-surface/80 p-3 shadow-panel backdrop-blur-md sm:right-4 sm:top-4">
             <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"><Network className="size-3.5 text-primary" /> Map layers</div>
             <Button type="button" size="sm" variant="outline" onClick={refreshTraffic} disabled={trafficRefreshing} className="w-full justify-start border-border bg-transparent text-xs">
@@ -1247,21 +1454,37 @@ function MapSwitch({ icon: Icon, label, checked, onCheckedChange }: { icon: type
 
 export function QidreDashboard() {
   const [view, setView] = useState<View>("home");
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("qidre-theme") : null;
+    return saved === "light" || saved === "dark" ? saved : "dark";
+  });
+
+  useEffect(() => {
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    localStorage.setItem("qidre-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+
   const activeView = useMemo(
     () => ({
       home: <HomeView onChange={setView} />,
-      compare: <CompareView />,
-      fleet: <FleetView />,
+      compare: <CompareView theme={theme} />,
+      fleet: <FleetView theme={theme} />,
       simulator: <SimulatorView />,
       operations: <OperationsView />,
     })[view],
-    [view]
+    [view, theme]
   );
 
   return (
     <TooltipProvider>
-      <main className="flex h-dvh min-h-[600px] flex-col overflow-hidden bg-background text-foreground">
-        <TopNav view={view} onChange={setView} />
+      <main className="flex h-dvh min-h-[600px] flex-col overflow-hidden bg-background text-foreground transition-colors duration-200">
+        <TopNav view={view} onChange={setView} theme={theme} onToggleTheme={toggleTheme} />
         <div className="min-h-0 flex-1 overflow-hidden">{activeView}</div>
         <Tooltip><TooltipTrigger asChild><div className="fixed bottom-3 left-3 z-40 hidden size-2 rounded-full bg-status shadow-neon-status lg:block" /></TooltipTrigger><TooltipContent side="right">Optimization engine online</TooltipContent></Tooltip>
       </main>

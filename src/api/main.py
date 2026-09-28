@@ -328,6 +328,15 @@ def _routes_to_response(routes, problem, elapsed_s, algo, fitness_hist, div_hist
             except Exception:
                 pass
 
+        if len(polyline) < 2 and len(nodes) >= 2 and len(route) > 0:
+            polyline = []
+            for n in nodes:
+                if n == 0:
+                    polyline.append([problem.depot_lat, problem.depot_lon])
+                elif n - 1 < len(problem.stops):
+                    s = problem.stops[n - 1]
+                    polyline.append([s.lat, s.lon])
+
         route_list.append({
             "vehicle_id":       veh.id if veh else vi,
             "is_ev":            veh.is_ev if veh else False,
