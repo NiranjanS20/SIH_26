@@ -21,7 +21,7 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
   return (
     <div 
       ref={containerRef}
-      dangerouslySetInnerHTML={{ __html: `<header class="fixed top-0 left-0 w-full z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.03)]"><div class="h-20 w-full px-gutter md:px-margin max-w-7xl mx-auto flex items-center justify-between"><a class="group flex items-center gap-space-xs transition-opacity hover:opacity-80" data-path="landing-portal" href="#"><span class="font-['Orbitron'] text-headline-md tracking-[0.28em] text-primary-container font-bold uppercase select-none">QIDRE</span></a><div class="flex items-center gap-space-lg"><div class="hidden sm:flex items-center gap-space-xs px-space-xs py-1 rounded-full bg-surface-container-low"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span></span><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Node Active</span></div><nav class="flex items-center gap-space-md" data-active-classes="text-primary-container font-semibold"><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface transition-colors flex items-center" data-path="benchmarks" href="#">Benchmarks →</a></nav><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-20 bg-surface min-h-[calc(100vh-5rem)]"><div class="flex flex-col w-full">
+      dangerouslySetInnerHTML={{ __html: `<header class="fixed top-0 left-0 w-full z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.03)]"><div class="h-20 w-full px-gutter md:px-margin max-w-7xl mx-auto flex items-center justify-between"><a class="group flex items-center gap-2 transition-opacity hover:opacity-80" data-path="landing-portal" href="#"><img src="/logo-icon.png" alt="QIDRE" class="h-8 w-8 object-contain drop-shadow-[0_0_8px_rgba(0,180,255,0.4)]" /><span class="font-sans font-bold text-headline-md tracking-[0.28em] text-primary-container font-bold uppercase select-none">QIDRE</span></a><div class="flex items-center gap-space-lg"><div class="hidden sm:flex items-center gap-space-xs px-space-xs py-1 rounded-full bg-surface-container-low"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span></span><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Node Active</span></div><nav class="flex items-center gap-space-md" data-active-classes="text-primary-container font-semibold"><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface transition-colors flex items-center" data-path="benchmarks" href="#">Benchmarks →</a></nav><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-20 bg-surface min-h-[calc(100vh-5rem)]"><div class="flex flex-col w-full">
 <!-- SUB-HEADER TELEMETRY STRIP -->
 <div class="w-full bg-surface-container-lowest shadow-sm mb-space-md">
 <div class="max-w-7xl mx-auto px-gutter md:px-margin py-3 flex flex-wrap items-center justify-between gap-y-2">
@@ -252,7 +252,7 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
 <path d="M 680,0 C 720,110 650,210 690,320 C 730,420 710,510 750,680 L 1000,680 L 1000,0 Z" fill="url(#landGrad)"></path>
 <!-- Elephanta Island in Harbour Bay -->
 <path d="M 520,380 C 550,370 560,400 540,420 C 520,430 500,410 520,380 Z" fill="#e2e6f0"></path>
-<text fill="#757686" font-family="Hanken Grotesk" font-size="10" font-weight="600" text-anchor="middle" x="530" y="440">Gharapuri / Elephanta</text>
+<text fill="#757686" font-family="Inter" font-size="10" font-weight="600" text-anchor="middle" x="530" y="440">Gharapuri / Elephanta</text>
 <!-- Secondary Urban Road Arterials (Muted) -->
 <g fill="none" stroke="#d5d7e2" stroke-width="1.5">
 <path d="M 120,30 L 160,180 L 150,340 L 190,520"></path>
@@ -264,7 +264,7 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
 <!-- MTHL Atal Setu Sea Bridge Physical Structure Geometry -->
 <path d="M 285,340 C 380,335 520,375 700,410" fill="none" opacity="0.6" stroke="#b0b5c9" stroke-linecap="round" stroke-width="8"></path>
 <path d="M 285,340 C 380,335 520,375 700,410" fill="none" stroke="#f0f2f8" stroke-linecap="round" stroke-width="4"></path>
-<text fill="#444655" font-family="Space Grotesk" font-size="11" font-weight="700" letter-spacing="0.08em" x="490" y="350">ATAL SETU (MTHL EXPRESSWAY)</text>
+<text fill="#444655" font-family="Inter" font-size="11" font-weight="700" letter-spacing="0.08em" x="490" y="350">ATAL SETU (MTHL EXPRESSWAY)</text>
 <!-- ROUTE 1: BASELINE DIJKSTRA (Cobalt #0027aa, arterial crawl with detour) -->
 <g class="transition-opacity duration-300" id="route-baseline">
 <!-- Shadow/Glow -->
@@ -285,7 +285,7 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
 <circle cx="0" cy="0" fill="#ba1a1a" r="10"></circle>
 <path d="M 0,-4 L 0,1 M 0,3 L 0,4.5" stroke="#ffffff" stroke-linecap="round" stroke-width="2"></path>
 <rect fill="#2e3037" height="24" opacity="0.9" rx="6" width="130" x="18" y="-12"></rect>
-<text fill="#ffffff" font-family="Hanken Grotesk" font-size="10" font-weight="600" x="26" y="4">Sewri Bottleneck +5m</text>
+<text fill="#ffffff" font-family="Inter" font-size="10" font-weight="600" x="26" y="4">Sewri Bottleneck +5m</text>
 </g>
 <!-- SWARM OPTIMIZED DIVERGENCE CALLOUT -->
 <g transform="translate(295, 230)">
@@ -299,10 +299,10 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
 <g transform="translate(220, 120)">
 <circle cx="0" cy="0" fill="#0027aa" opacity="0.2" r="16"></circle>
 <circle cx="0" cy="0" fill="#0027aa" r="10"></circle>
-<text fill="#ffffff" font-family="Space Grotesk" font-size="11" font-weight="700" text-anchor="middle" x="0" y="4">A</text>
+<text fill="#ffffff" font-family="Inter" font-size="11" font-weight="700" text-anchor="middle" x="0" y="4">A</text>
 <g transform="translate(18, -10)">
 <rect fill="#ffffff" filter="drop-shadow(0px 2px 4px rgba(0,0,0,0.1))" height="30" rx="6" width="110"></rect>
-<text fill="#191b22" font-family="Space Grotesk" font-size="10" font-weight="700" x="8" y="14">BKC TERMINAL</text>
+<text fill="#191b22" font-family="Inter" font-size="10" font-weight="700" x="8" y="14">BKC TERMINAL</text>
 <text fill="#757686" font-family="JetBrains Mono" font-size="8" x="8" y="24">Origin Hub 19.065°N</text>
 </g>
 </g>
@@ -310,18 +310,18 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
 <g transform="translate(790, 510)">
 <circle cx="0" cy="0" fill="#006a69" opacity="0.2" r="18"></circle>
 <circle cx="0" cy="0" fill="#006a69" r="11"></circle>
-<text fill="#ffffff" font-family="Space Grotesk" font-size="11" font-weight="700" text-anchor="middle" x="0" y="4">B</text>
+<text fill="#ffffff" font-family="Inter" font-size="11" font-weight="700" text-anchor="middle" x="0" y="4">B</text>
 <g transform="translate(-130, -10)">
 <rect fill="#ffffff" filter="drop-shadow(0px 2px 4px rgba(0,0,0,0.1))" height="30" rx="6" width="122"></rect>
-<text fill="#006a69" font-family="Space Grotesk" font-size="10" font-weight="700" x="8" y="14">JNPT MARINE GATE</text>
+<text fill="#006a69" font-family="Inter" font-size="10" font-weight="700" x="8" y="14">JNPT MARINE GATE</text>
 <text fill="#757686" font-family="JetBrains Mono" font-size="8" x="8" y="24">Destination 72.951°E</text>
 </g>
 </g>
 <!-- Waypoint Markers -->
 <circle cx="285" cy="340" fill="#191b22" r="3.5"></circle>
-<text fill="#444655" font-family="Hanken Grotesk" font-size="9" font-weight="600" x="295" y="344">Sewri Ramp</text>
+<text fill="#444655" font-family="Inter" font-size="9" font-weight="600" x="295" y="344">Sewri Ramp</text>
 <circle cx="700" cy="410" fill="#191b22" r="3.5"></circle>
-<text fill="#444655" font-family="Hanken Grotesk" font-size="9" font-weight="600" x="708" y="405">Chirle Interchange</text>
+<text fill="#444655" font-family="Inter" font-size="9" font-weight="600" x="708" y="405">Chirle Interchange</text>
 </svg>
 <!-- MAP TOOLS OVERLAY (Top-Right) -->
 <div class="absolute top-16 right-4 flex flex-col gap-1.5 z-10">
@@ -497,7 +497,7 @@ export default function QidreRouteComparisonResultsState({ navigate }: { navigat
       btnBoth.className = activeBtnClass;
     }
   }
-</script></main><footer class="w-full bg-surface-container-lowest py-space-xl"><div class="w-full max-w-7xl mx-auto px-gutter md:px-margin flex flex-col md:flex-row items-center justify-between gap-space-md text-center md:text-left"><div class="flex items-center gap-space-xs font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase"><span class="font-semibold text-on-surface">SIH 2026</span><span>·</span><span>Quantum Technology Vertical</span><span>·</span><span class="text-secondary">Egreen Quanta</span></div><div class="font-label-sm text-label-sm text-outline tracking-wider">© 2026 QIDRE Algorithmic Routing Engine</div></div></footer>` }} 
+</script></main><footer class="w-full bg-surface-container-lowest py-space-xl"><div class="w-full max-w-7xl mx-auto px-gutter md:px-margin flex flex-col md:flex-row items-center justify-between gap-space-md text-center md:text-left"><div class="flex items-center gap-space-xs font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase"><span class="font-semibold text-on-surface">QIDRE</span><span>·</span><span>Quantum Technology Vertical</span><span>·</span><span class="text-secondary">Egreen Quanta</span></div><div class="font-label-sm text-label-sm text-outline tracking-wider">© 2026 QIDRE Algorithmic Routing Engine</div></div></footer>` }} 
       className="w-full h-full"
     />
   );

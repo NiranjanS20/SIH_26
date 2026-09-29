@@ -110,7 +110,7 @@ async def search(
         south, west, north, east = bbox
         params["viewbox"] = f"{west},{north},{east},{south}"
 
-    headers = {"User-Agent": "QIDRE-SIH2026/1.0 (student-project)"}
+    headers = {"User-Agent": "QIDRE-PROD/1.0 (student-project)"}
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -198,7 +198,7 @@ async def reverse(lat: float, lon: float) -> Optional[Dict[str, Any]]:
         "format": "json",
         "zoom": 16,
     }
-    headers = {"User-Agent": "QIDRE-SIH2026/1.0 (student-project)"}
+    headers = {"User-Agent": "QIDRE-PROD/1.0 (student-project)"}
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:

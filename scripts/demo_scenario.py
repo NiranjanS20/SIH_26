@@ -1,7 +1,7 @@
 """
 scripts/demo_scenario.py
 ─────────────────────────
-Full end-to-end QIDRE demo runner for SIH presentation.
+Full end-to-end QIDRE demo runner for production presentation.
 
 Runs:
   1. Load a synthetic Bengaluru graph (200 nodes)
@@ -98,7 +98,7 @@ def post(client, base, path, payload, label):
 def main(host="localhost", port=8000):
     base = f"http://{host}:{port}"
     print()
-    section("QIDRE — SIH 2026 Demo Scenario")
+    section("QIDRE — Production Demo Scenario")
     print(f"  Target: {base}")
     print()
 

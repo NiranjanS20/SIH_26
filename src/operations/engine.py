@@ -8,7 +8,7 @@ Operational Intelligence Layer for QIDRE:
 - Module D: Corrective Actions & Tips Engine
 
 Specifications:
-- New_Features_Implementation.pdf (SIH 2026, Egreen Quanta)
+- New_Features_Implementation.pdf (Production, Egreen Quanta)
 - next_feature_quantum.pdf (§2B, §3)
 """
 

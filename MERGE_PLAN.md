@@ -1,4 +1,4 @@
-# MERGE_PLAN.md — QIDRE SIH 2026
+# MERGE_PLAN.md — QIDRE Production
 
 > **Phase 0 Discovery & Merge Plan**
 > Generated 2026-09-25 after full inventory of both projects.
@@ -54,7 +54,7 @@
 
 ## 2. Requirements Summary (from all source materials, 15 lines)
 
-1. Product: QIDRE for SIH 2026. Tagline: "Optimize Every Delivery. Move More with Less."
+1. Product: QIDRE for Production. Tagline: "Optimize Every Delivery. Move More with Less."
 2. Two modules: Part A (Route Comparison) and Part B (Fleet Optimizer with QPSO + baselines).
 3. Real OSM road network: Mumbai areas (BKC, Churchgate, Lower Parel, Andheri, Powai). Cached as GraphML.
 4. Distance/time matrix from road network (Dijkstra), not Euclidean.

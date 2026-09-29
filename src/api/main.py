@@ -31,8 +31,10 @@ from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_swagger_ui_html
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -65,11 +67,33 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 # App & CORS
 # ─────────────────────────────────────────────────────────────────────────────
 
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+
 app = FastAPI(
     title="QIDRE API",
-    description="Quantum-Inspired Dynamic Route Engine — SIH 2026",
+    description='<div align="left"><img src="/assets/logo.png" alt="QIDRE Logo" width="180" style="margin-bottom: 8px;" /></div>\n\nQuantum-Inspired Dynamic Route Engine — Production',
     version="1.1.0",
+    docs_url=None,
+    redoc_url=None,
 )
+
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title="QIDRE API Documentation",
+        swagger_favicon_url="/assets/logo-icon.png",
+    )
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    icon_path = ASSETS_DIR / "logo-icon.png"
+    if icon_path.exists():
+        return FileResponse(str(icon_path), media_type="image/png")
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 app.add_middleware(
     CORSMiddleware,

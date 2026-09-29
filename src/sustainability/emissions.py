@@ -14,7 +14,7 @@ Subsystem A — Non-Linear Vehicle Energy Model
   • Auxiliary electrical/HVAC crawl burn (Paux × Δt)
   • Regenerative braking capture for EVs (ηregen × |Ptractive| × Δt)
 
-  Three calibrated vehicle profiles (from SIH next_feature_quantum.pdf):
+  Three calibrated vehicle profiles (from calibrated vehicle specifications):
     • ev_van      — Commercial EV delivery van (Tata Ace EV class)
     • ev_2w       — Hyperlocal 2-wheeler EV (Swiggy/Zomato fleet class)
     • ice_lcv     — Standard diesel Light Commercial Vehicle (CMEL-calibrated)

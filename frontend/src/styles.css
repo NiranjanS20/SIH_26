@@ -67,8 +67,8 @@
   --color-status: var(--status);
   --color-warning: var(--warning);
   --color-baseline: var(--baseline);
-  --font-sans: "Geist", sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --shadow-panel: 0 16px 40px oklch(0.04 0.03 255 / 32%);
   --shadow-neon-cyan: 0 0 24px oklch(0.78 0.14 205 / 28%);
@@ -173,6 +173,9 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.011em;
     overflow: hidden;
   }
 

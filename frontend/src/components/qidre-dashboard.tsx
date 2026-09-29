@@ -101,9 +101,13 @@ function findClosestArea(lat: number, lon: number): AreaId {
 
 function Logo() {
   return (
-    <div className="flex min-w-0 items-center gap-3">
-      <div className="relative grid size-9 shrink-0 place-items-center rounded-md border border-primary/30 bg-primary/10 shadow-neon-cyan">
-        <Atom className="size-5 text-primary" aria-hidden="true" />
+    <div className="flex min-w-0 items-center gap-2.5">
+      <div className="relative flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10 p-1 shadow-neon-cyan transition-transform hover:scale-105">
+        <img
+          src="/logo-icon.png"
+          alt="QIDRE Logo"
+          className="size-8 object-contain drop-shadow-[0_0_10px_rgba(0,180,255,0.45)]"
+        />
         <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-status shadow-neon-status" />
       </div>
       <div className="min-w-0">
@@ -218,8 +222,20 @@ function HomeView({ onChange }: { onChange: (view: View) => void }) {
     <section className="relative flex h-full flex-col justify-between overflow-y-auto px-6 py-10 sm:px-10 lg:px-16">
       <RouteBackdrop />
       <div className="relative z-10 max-w-4xl space-y-6">
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[11px] font-medium text-primary">
-          <Sparkles className="size-3" /> SIH 2026 · Quantum-Inspired Urban Logistics
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <img
+            src="/logo-icon.png"
+            alt="QIDRE"
+            className="size-16 sm:size-20 shrink-0 object-contain drop-shadow-[0_0_25px_rgba(0,180,255,0.45)]"
+          />
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[11px] font-medium text-primary">
+              <Sparkles className="size-3" /> Production · Quantum-Inspired Urban Logistics
+            </div>
+            <div className="font-display text-xs sm:text-sm font-semibold tracking-widest text-muted-foreground uppercase">
+              Algorithmic Quantum Route Engine
+            </div>
+          </div>
         </div>
         <h1 className="font-display text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl text-foreground">
           Real-time dynamic fleet routing powered by <span className="text-primary">quantum-inspired metaheuristics</span>.

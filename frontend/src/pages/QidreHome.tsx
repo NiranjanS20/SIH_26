@@ -21,7 +21,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
   return (
     <div 
       ref={containerRef}
-      dangerouslySetInnerHTML={{ __html: `<header class="fixed top-0 left-0 w-full z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.03)]"><div class="h-20 w-full px-gutter md:px-margin max-w-7xl mx-auto flex items-center justify-between"><a class="group flex items-center gap-space-xs transition-opacity hover:opacity-80" data-path="landing-portal" href="#"><span class="font-['Orbitron'] text-headline-md tracking-[0.28em] text-primary-container font-bold uppercase select-none">QIDRE</span></a><div class="flex items-center gap-space-lg"><div class="hidden sm:flex items-center gap-space-xs px-space-xs py-1 rounded-full bg-surface-container-low"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span></span><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Node Active</span></div><nav class="flex items-center gap-space-md" data-active-classes="text-primary-container font-semibold"><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface transition-colors flex items-center" data-path="benchmarks" href="#">Benchmarks →</a></nav><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-20 bg-surface min-h-[calc(100vh-5rem)]"><div class="flex flex-col w-full">
+      dangerouslySetInnerHTML={{ __html: `<header class="fixed top-0 left-0 w-full z-50 bg-surface/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.03)]"><div class="h-20 w-full px-gutter md:px-margin max-w-7xl mx-auto flex items-center justify-between"><a class="group flex items-center gap-2 transition-opacity hover:opacity-80" data-path="landing-portal" href="#"><img src="/logo-icon.png" alt="QIDRE" class="h-8 w-8 object-contain drop-shadow-[0_0_8px_rgba(0,180,255,0.4)]" /><span class="font-sans font-bold text-headline-md tracking-[0.28em] text-primary-container font-bold uppercase select-none">QIDRE</span></a><div class="flex items-center gap-space-lg"><div class="hidden sm:flex items-center gap-space-xs px-space-xs py-1 rounded-full bg-surface-container-low"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span></span><span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-wider">Node Active</span></div><nav class="flex items-center gap-space-md" data-active-classes="text-primary-container font-semibold"><a class="text-on-surface-variant font-label-md text-label-md hover:text-on-surface transition-colors flex items-center" data-path="benchmarks" href="#">Benchmarks →</a></nav><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-20 bg-surface min-h-[calc(100vh-5rem)]"><div class="flex flex-col w-full">
 <section class="relative w-full overflow-hidden bg-surface py-space-xl md:py-28">
 <div aria-hidden="true" class="absolute inset-0 pointer-events-none opacity-80">
 <div class="absolute -top-32 -left-20 w-[640px] h-[640px] rounded-full bg-gradient-to-br from-primary-container/10 via-secondary-container/20 to-transparent blur-3xl"></div>
@@ -31,13 +31,11 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
 <div class="lg:col-span-7 flex flex-col items-start z-10">
 <div class="inline-flex items-center gap-space-xs px-3.5 py-1 rounded-full bg-surface-container-low shadow-sm mb-6">
 <span class="inline-flex w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></span>
-<span class="font-['Orbitron'] text-label-sm font-semibold tracking-[0.2em] text-on-surface-variant uppercase">
-            SIH 2026 · QUANTUM TECHNOLOGY VERTICAL
+<span class="font-sans font-bold text-label-sm font-semibold tracking-[0.2em] text-on-surface-variant uppercase">
+            ENTERPRISE QUANTUM TECHNOLOGY
           </span>
 </div>
-<h1 class="font-['Orbitron'] text-primary-container text-5xl md:text-7xl font-bold tracking-[0.24em] uppercase mb-5 leading-none select-none">
-          QIDRE
-        </h1>
+<div class="flex items-center gap-4 mb-5"><img src="/logo-icon.png" alt="QIDRE" class="w-16 h-16 md:w-20 md:h-20 object-contain drop-shadow-[0_0_24px_rgba(0,180,255,0.45)]" /><h1 class="font-sans font-bold text-primary-container text-5xl md:text-7xl font-bold tracking-[0.24em] uppercase leading-none select-none">QIDRE</h1></div>
 <p class="font-headline-sm text-body-lg text-outline max-w-xl mb-8 leading-relaxed font-normal">
           Quantum-inspired route and fleet optimization — benchmarked, not promised.
         </p>
@@ -74,7 +72,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
 <text fill="#00504f" font-family="'JetBrains Mono'" font-size="9" x="254" y="226">ENTANGLED JUNCTION</text>
 <g transform="translate(18, 350)">
 <rect fill="#faf8ff" fill-opacity="0.92" height="52" rx="8" width="138"></rect>
-<text fill="#191b22" font-family="'Orbitron'" font-size="9" font-weight="700" letter-spacing="1" x="12" y="20">MUMBAI SECTOR 04</text>
+<text fill="#191b22" font-family="'Inter'" font-size="9" font-weight="700" letter-spacing="1" x="12" y="20">MUMBAI SECTOR 04</text>
 <text fill="#006a69" font-family="'JetBrains Mono'" font-size="10" font-weight="600" x="12" y="38">Δ T -18.4% · CO² -24%</text>
 </g>
 </svg>
@@ -103,7 +101,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
 <span class="text-outline-variant">·</span>
 <span class="font-telemetry-data text-label-sm text-outline">Pairwise Comparison</span>
 </div>
-<h2 class="font-['Space_Grotesk'] text-headline-lg font-bold text-on-surface tracking-tight mb-3">
+<h2 class="font-sans font-semibold text-headline-lg font-bold text-on-surface tracking-tight mb-3">
             COMPARE ROUTES
           </h2>
 <p class="font-body-md text-body-lg text-outline leading-relaxed mb-8">
@@ -111,7 +109,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
           </p>
 </div>
 <div class="pt-4 flex items-center justify-between">
-<a class="inline-flex items-center justify-center px-7 py-3 rounded-full bg-tertiary-container hover:bg-tertiary text-on-primary font-['Space_Grotesk'] font-bold text-label-md tracking-wider transition-all duration-200 transform group-hover:scale-[1.02] shadow-md" data-path="compare-routes" href="#">
+<a class="inline-flex items-center justify-center px-7 py-3 rounded-full bg-tertiary-container hover:bg-tertiary text-on-primary font-sans font-semibold font-bold text-label-md tracking-wider transition-all duration-200 transform group-hover:scale-[1.02] shadow-md" data-path="compare-routes" href="#">
             Start Comparing →
           </a>
 <span class="font-telemetry-data text-label-sm text-on-surface-variant opacity-75">Dijkstra vs QPSO</span>
@@ -133,7 +131,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
 <span class="text-outline-variant">·</span>
 <span class="font-telemetry-data text-label-sm text-outline">Multi-Agent Dispatch</span>
 </div>
-<h2 class="font-['Space_Grotesk'] text-headline-lg font-bold text-on-surface tracking-tight mb-3">
+<h2 class="font-sans font-semibold text-headline-lg font-bold text-on-surface tracking-tight mb-3">
             FLEET OPTIMIZER
           </h2>
 <p class="font-body-md text-body-lg text-outline leading-relaxed mb-8">
@@ -141,7 +139,7 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
           </p>
 </div>
 <div class="pt-4 flex items-center justify-between">
-<a class="inline-flex items-center justify-center px-7 py-3 rounded-full bg-tertiary-container hover:bg-tertiary text-on-primary font-['Space_Grotesk'] font-bold text-label-md tracking-wider transition-all duration-200 transform group-hover:scale-[1.02] shadow-md" data-path="fleet-optimizer" href="#">
+<a class="inline-flex items-center justify-center px-7 py-3 rounded-full bg-tertiary-container hover:bg-tertiary text-on-primary font-sans font-semibold font-bold text-label-md tracking-wider transition-all duration-200 transform group-hover:scale-[1.02] shadow-md" data-path="fleet-optimizer" href="#">
             Optimize a Fleet →
           </a>
 <span class="font-telemetry-data text-label-sm text-on-surface-variant opacity-75">N-Vehicle CVRP</span>
@@ -159,11 +157,11 @@ export default function QidreHome({ navigate }: { navigate: (path: string) => vo
 </div>
 <div class="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-surface-container-highest">
 <span class="w-2 h-2 rounded-full bg-secondary"></span>
-<span class="font-['Orbitron'] text-label-sm font-semibold tracking-wider text-on-surface-variant">v2.4-hybrid-engine</span>
+<span class="font-sans font-bold text-label-sm font-semibold tracking-wider text-on-surface-variant">v2.4-hybrid-engine</span>
 </div>
 </div>
 </section>
-</div></main><footer class="w-full bg-surface-container-lowest py-space-xl"><div class="w-full max-w-7xl mx-auto px-gutter md:px-margin flex flex-col md:flex-row items-center justify-between gap-space-md text-center md:text-left"><div class="flex items-center gap-space-xs font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase"><span class="font-semibold text-on-surface">SIH 2026</span><span>·</span><span>Quantum Technology Vertical</span><span>·</span><span class="text-secondary">Egreen Quanta</span></div><div class="font-label-sm text-label-sm text-outline tracking-wider">© 2026 QIDRE Algorithmic Routing Engine</div></div></footer>` }} 
+</div></main><footer class="w-full bg-surface-container-lowest py-space-xl"><div class="w-full max-w-7xl mx-auto px-gutter md:px-margin flex flex-col md:flex-row items-center justify-between gap-space-md text-center md:text-left"><div class="flex items-center gap-space-xs font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase"><span class="font-semibold text-on-surface">QIDRE</span><span>·</span><span>Quantum Technology Vertical</span><span>·</span><span class="text-secondary">Egreen Quanta</span></div><div class="font-label-sm text-label-sm text-outline tracking-wider">© 2026 QIDRE Algorithmic Routing Engine</div></div></footer>` }} 
       className="w-full h-full"
     />
   );
