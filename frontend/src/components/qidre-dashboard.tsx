@@ -188,13 +188,6 @@ function TopNav({
             </>
           )}
         </Button>
-        <div className="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-status opacity-60" />
-            <span className="relative inline-flex size-2 rounded-full bg-status" />
-          </span>
-          Systems nominal
-        </div>
       </div>
     </header>
   );
@@ -261,7 +254,7 @@ function HomeView({ onChange }: { onChange: (view: View) => void }) {
           { title: "Driver Ergonomics", desc: "Route strain scoring, unprotected right-turn penalties, and fleet workload equity thresholds." },
         ].map((feat) => (
           <Card key={feat.title} className="rounded-md border-border bg-card/60 p-4 backdrop-blur-md">
-            <div className="font-mono text-sm font-semibold text-foreground">{feat.title}</div>
+            <div className="font-sans text-sm font-semibold tracking-tight text-foreground">{feat.title}</div>
             <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{feat.desc}</p>
           </Card>
         ))}

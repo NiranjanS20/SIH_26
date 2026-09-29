@@ -97,7 +97,7 @@
 ### qidre-source frontend
 - `Math.random()` stop coordinates
 - Fake convergence data array
-- `"Systems nominal"` badge
+- Status badge (removed)
 - Dark neon theme with glassmorphism
 - SSR disabled globally
 - Single vehicle, uniform demand 1.0
