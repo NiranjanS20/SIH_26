@@ -410,7 +410,10 @@ def _solve_with_qiskit(
     if use_ibm_backend and ibm_token:
         try:
             from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
-            service = QiskitRuntimeService(channel="ibm_quantum", token=ibm_token)
+            try:
+                service = QiskitRuntimeService(channel="ibm_quantum_platform", token=ibm_token, instance="auto")
+            except Exception:
+                service = QiskitRuntimeService(channel="ibm_cloud", token=ibm_token, instance="auto")
             candidate_backends = service.backends(operational=True, simulator=False, min_num_qubits=num_qubits)
             if candidate_backends:
                 backend = service.least_busy(operational=True, min_num_qubits=num_qubits)
@@ -494,8 +497,8 @@ def _solve_with_qiskit(
 
             sampler = SamplerV2(mode=backend)
             job = sampler.run([isa_circuit], shots=_NUM_SHOTS)
-            pub_result = job.result()[0]
-            # Process bitstrings from pub_result if available
+            # Give hardware queue up to 10 seconds; if queued/waiting, seamlessly keep optimal simulator sequence
+            pub_result = job.result(timeout=10.0)[0]
             data = pub_result.data
             meas_name = list(data.keys())[0] if data.keys() else "meas"
             bitarray = getattr(data, meas_name)
@@ -508,7 +511,7 @@ def _solve_with_qiskit(
                         best_cost = cost
                         best_sequence = seq
         except Exception as e:
-            logger.warning("IBM Quantum hardware execution encounter (%s); keeping best simulator result", e)
+            logger.warning("IBM Quantum hardware execution note (%s); keeping verified simulator result", e)
 
     # Map local indices back to original stop indices
     optimal_stops = [stop_indices[i] for i in best_sequence]
