@@ -4,7 +4,7 @@ src/api/jobs.py
 Job store and SSE streaming logic.
 """
 
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any, AsyncGenerator, Optional
 import asyncio
 import uuid
 import json
