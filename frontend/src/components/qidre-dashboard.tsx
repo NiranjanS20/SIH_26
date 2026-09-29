@@ -228,13 +228,8 @@ function HomeView({ onChange }: { onChange: (view: View) => void }) {
             alt="QIDRE"
             className="size-16 sm:size-20 shrink-0 object-contain drop-shadow-[0_0_25px_rgba(0,180,255,0.45)]"
           />
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[11px] font-medium text-primary">
-              <Sparkles className="size-3" /> Production · Quantum-Inspired Urban Logistics
-            </div>
-            <div className="font-display text-xs sm:text-sm font-semibold tracking-widest text-muted-foreground uppercase">
-              Algorithmic Quantum Route Engine
-            </div>
+          <div className="font-display text-xs sm:text-sm font-semibold tracking-widest text-muted-foreground uppercase">
+            Algorithmic Quantum Route Engine
           </div>
         </div>
         <h1 className="font-display text-4xl font-extrabold tracking-tight sm:text-5xl lg:text-6xl text-foreground">
