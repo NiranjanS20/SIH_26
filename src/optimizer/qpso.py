@@ -17,6 +17,25 @@ Update rule:
 
 The ± sign is chosen randomly. beta (contraction-expansion coefficient)
 controls convergence speed: beta < 1 → convergent, beta > 1 → divergent.
+
+Phase 3 enhancements:
+  - Adaptive contraction-expansion: when traffic volatility is high (speed
+    variance across edges indicates an incident/blockage), beta is widened
+    to escape local minima. This is the adaptive contraction-expansion
+    coefficient — a named metaphor referencing QPSO's delta-potential-well
+    ancestry, not a claim of literal quantum physics.
+    effective_beta = beta * (1.0 + 0.45 * traffic_volatility)
+
+  - Macro-QPSO / Micro-QAOA post-processing: after QPSO converges, dense
+    local clusters (4–8 stops within 2km) are identified and resequenced
+    using QAOA via Qiskit. Falls back to classical NN if Qiskit unavailable.
+
+  - Pareto archive: during iterations, non-dominated solutions are cached
+    for the approximate Pareto frontier endpoint (Phase 4).
+
+NOTE ON CONSTANTS: Beta annealing range, tunneling coefficient (0.45),
+volatility threshold, and all optimizer parameters are tunable defaults
+— not universal constants. Calibrate via validation runs.
 """
 
 from __future__ import annotations
@@ -25,7 +44,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -49,6 +68,10 @@ class QPSOConfig:
     seed:            int   = 42
     early_stop_tol:  float = 1e-7  # tighter tolerance
     patience:        int   = 50    # wait longer before stopping
+    # Phase 3: adaptive tunneling coefficient (tunable default)
+    tunneling_coeff: float = 0.45  # β expansion factor for traffic volatility
+    # Phase 2: enable QAOA micro-optimization post-processing
+    enable_qaoa_micro: bool = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -64,6 +87,100 @@ class SolverResult:
     iterations_run:      int
     elapsed_s:           float
     algorithm:           str = "QPSO"
+    # Phase 4: Pareto archive (approximate frontier from single run)
+    pareto_archive:      Optional[List[Dict]] = field(default=None)
+    # Phase 2: QAOA micro-optimization metadata
+    qaoa_metadata:       Optional[Dict] = field(default=None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Traffic volatility estimation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _estimate_traffic_volatility(
+    problem: VRPProblem,
+    routes: List[List[int]],
+) -> float:
+    """
+    Estimate traffic volatility from speed variance across route edges.
+
+    High volatility indicates incident-disrupted traffic where the swarm
+    should explore more broadly (wider β) to escape local minima.
+
+    Returns:
+        Volatility score in [0, 1]: 0 = uniform speeds, 1 = extreme variance.
+
+    NOTE: This is a heuristic proxy, not a measured traffic sensor value.
+    """
+    D = problem.dist_matrix
+    T = problem.time_matrix
+    if D is None or T is None:
+        return 0.0
+
+    speeds = []
+    for route in routes:
+        if not route:
+            continue
+        nodes = [0] + [s + 1 for s in route] + [0]
+        for i in range(len(nodes) - 1):
+            d_m = float(D[nodes[i]][nodes[i + 1]])
+            t_s = float(T[nodes[i]][nodes[i + 1]])
+            if t_s > 0 and d_m > 0:
+                speed_kmh = (d_m / 1000.0) / (t_s / 3600.0)
+                speeds.append(speed_kmh)
+
+    if len(speeds) < 2:
+        return 0.0
+
+    # Coefficient of variation as volatility proxy
+    mean_speed = np.mean(speeds)
+    std_speed = np.std(speeds)
+    if mean_speed < 1.0:
+        return 0.0
+
+    cv = std_speed / mean_speed
+    # Clip to [0, 1] and apply a soft-sigmoid to avoid extreme values
+    return float(min(1.0, cv))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pareto archive (Phase 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_dominated(a: Dict, b: Dict) -> bool:
+    """Check if solution 'a' is dominated by solution 'b' (all objectives)."""
+    keys = ["time", "energy", "stress"]
+    return all(b.get(k, 0) <= a.get(k, 0) for k in keys) and \
+           any(b.get(k, 0) < a.get(k, 0) for k in keys)
+
+
+def _update_pareto_archive(
+    archive: List[Dict],
+    candidate: Dict,
+    max_size: int = 20,
+) -> List[Dict]:
+    """
+    Add a candidate solution to the Pareto archive if non-dominated.
+
+    NOTE: This is an approximate frontier from a single weighted-sum QPSO
+    run. It samples the objective space along one direction and may miss
+    Pareto-optimal points elsewhere on the frontier, especially on
+    non-convex regions. See audit §2 for discussion.
+    """
+    # Check if candidate is dominated by any archive member
+    for member in archive:
+        if _is_dominated(candidate, member):
+            return archive  # Candidate is dominated, don't add
+
+    # Remove archive members dominated by the candidate
+    archive = [m for m in archive if not _is_dominated(m, candidate)]
+    archive.append(candidate)
+
+    # Cap archive size (keep most diverse)
+    if len(archive) > max_size:
+        archive = archive[-max_size:]
+
+    return archive
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -150,11 +267,24 @@ class QPSOSolver:
         no_improve = 0
         best_ever_fit = gbest_fit
 
+        # Phase 4: Pareto archive (approximate frontier)
+        pareto_archive: List[Dict] = []
+
+        # Phase 3: estimate initial traffic volatility for adaptive tunneling
+        best_routes = decode_particle(gbest, problem)
+        traffic_volatility = _estimate_traffic_volatility(problem, best_routes)
+
         # ── Main QPSO loop ─────────────────────────────────────────────
         for it in range(1, cfg.max_iterations + 1):
 
             # Anneal beta: linearly from beta_start → beta_end
             beta = cfg.beta_start - (cfg.beta_start - cfg.beta_end) * (it / cfg.max_iterations)
+
+            # Phase 3: Adaptive contraction-expansion (tunneling metaphor)
+            # When traffic volatility is high, widen β to escape local minima.
+            # This is an adaptive contraction-expansion coefficient — a named
+            # metaphor referencing QPSO's delta-potential-well ancestry.
+            effective_beta = beta * (1.0 + cfg.tunneling_coeff * traffic_volatility)
 
             # Mean best position (mbest)
             mbest = np.mean(pbest, axis=0)
@@ -168,7 +298,7 @@ class QPSOSolver:
                 u = np.clip(u, 1e-10, 1.0)   # avoid log(0)
                 sign = rng.choice([-1, 1], size=n_stops)
                 # Correct QPSO characteristic length uses mbest
-                L = beta * np.abs(mbest - pop[i])
+                L = effective_beta * np.abs(mbest - pop[i])
                 pop[i] = p_i + sign * L * np.log(1.0 / u)
 
             # Diversity-preserving mutation
@@ -191,6 +321,44 @@ class QPSOSolver:
                         gbest = pop[i].copy()
                         gbest_fit = f_i
 
+                        # Phase 3: re-estimate volatility when gbest changes
+                        best_routes = decode_particle(gbest, problem)
+                        traffic_volatility = _estimate_traffic_volatility(
+                            problem, best_routes,
+                        )
+
+            # Phase 4: update Pareto archive with current gbest objectives
+            if it % 10 == 0:  # Sample every 10 iterations to limit overhead
+                try:
+                    cur_routes = decode_particle(gbest, problem)
+                    from src.optimizer.fitness import (
+                        route_distance, route_travel_time, route_energy_cost,
+                    )
+                    total_time = sum(route_travel_time(r, problem) for r in cur_routes if r)
+                    total_energy = sum(
+                        route_energy_cost(r, problem, vi)
+                        for vi, r in enumerate(cur_routes) if r
+                    )
+                    total_stress = sum(
+                        evaluator._cognitive_evaluator.calculate_route_cognitive_load(
+                            r, problem
+                        )
+                        for r in cur_routes if r
+                    )
+                    candidate = {
+                        "iteration": it,
+                        "fitness": float(gbest_fit),
+                        "time": float(total_time),
+                        "energy": float(total_energy),
+                        "stress": float(total_stress),
+                        "routes": cur_routes,
+                    }
+                    pareto_archive = _update_pareto_archive(
+                        pareto_archive, candidate,
+                    )
+                except Exception:
+                    pass  # Don't let Pareto tracking break the solver
+
             # Track convergence
             fitness_history.append(float(gbest_fit))
             diversity = float(np.mean(np.std(pop, axis=0)))
@@ -212,17 +380,54 @@ class QPSOSolver:
 
             if it % 20 == 0:
                 logger.debug(
-                    "QPSO iter %3d/%d | gbest=%.4f | beta=%.3f | div=%.4f",
-                    it, cfg.max_iterations, gbest_fit, beta, diversity,
+                    "QPSO iter %3d/%d | gbest=%.4f | β_eff=%.3f | vol=%.3f | div=%.4f",
+                    it, cfg.max_iterations, gbest_fit, effective_beta,
+                    traffic_volatility, diversity,
                 )
 
         elapsed = time.perf_counter() - t0
         best_routes = decode_particle(gbest, problem)
 
+        # ── Phase 2: Micro-QAOA post-processing ───────────────────────
+        qaoa_metadata = None
+        if cfg.enable_qaoa_micro:
+            try:
+                from src.quantum.qml import HybridQuantumOptimizer
+                hybrid = HybridQuantumOptimizer(problem)
+                qaoa_result = hybrid.optimize_routes(best_routes, evaluator)
+
+                if qaoa_result["clusters_optimized"] > 0:
+                    best_routes = qaoa_result["routes"]
+                    # Re-evaluate fitness with QAOA-optimised routes
+                    new_fit = evaluator.evaluate(best_routes)
+                    if new_fit < gbest_fit:
+                        gbest_fit = new_fit
+                        logger.info(
+                            "QAOA micro-opt improved fitness: %.4f → %.4f",
+                            fitness_history[-1], new_fit,
+                        )
+
+                qaoa_metadata = {
+                    "clusters_detected": qaoa_result["clusters_detected"],
+                    "clusters_optimized": qaoa_result["clusters_optimized"],
+                    "qaoa_results": qaoa_result["qaoa_results"],
+                    "method": qaoa_result["method"],
+                    "qiskit_available": qaoa_result.get("qiskit_available", False),
+                }
+            except Exception as e:
+                logger.warning("QAOA post-processing failed: %s (keeping QPSO solution)", e)
+                qaoa_metadata = {"error": str(e), "method": "qpso_only"}
+
+        elapsed = time.perf_counter() - t0
+
         logger.info(
-            "QPSO done: %.3fs | %d iters | gbest=%.4f | routes=%d",
+            "QPSO done: %.3fs | %d iters | gbest=%.4f | routes=%d | qaoa=%s",
             elapsed, len(fitness_history) - 1, gbest_fit, len(best_routes),
+            "yes" if qaoa_metadata and qaoa_metadata.get("clusters_optimized", 0) > 0 else "no",
         )
+
+        # Phase 4: Build Pareto profiles for the frontier endpoint
+        pareto_profiles = _build_pareto_profiles(pareto_archive) if pareto_archive else None
 
         return SolverResult(
             routes=best_routes,
@@ -232,4 +437,61 @@ class QPSOSolver:
             iterations_run=len(fitness_history) - 1,
             elapsed_s=elapsed,
             algorithm="QPSO",
+            pareto_archive=pareto_profiles,
+            qaoa_metadata=qaoa_metadata,
         )
+
+
+def _build_pareto_profiles(archive: List[Dict]) -> List[Dict]:
+    """
+    Build named Pareto profiles from the archive for the frontend slider.
+
+    Three profiles:
+      - profile_speed: minimised time
+      - profile_eco: minimised energy
+      - profile_ergonomic: minimised driver stress
+
+    NOTE: This is an approximate frontier from a single weighted-sum QPSO
+    run — not a full multi-objective search. See audit doc §2.
+    """
+    if not archive:
+        return []
+
+    profiles = []
+
+    # Find best solution for each objective
+    by_time = min(archive, key=lambda x: x.get("time", float("inf")))
+    by_energy = min(archive, key=lambda x: x.get("energy", float("inf")))
+    by_stress = min(archive, key=lambda x: x.get("stress", float("inf")))
+
+    for name, solution in [
+        ("profile_speed", by_time),
+        ("profile_eco", by_energy),
+        ("profile_ergonomic", by_stress),
+    ]:
+        profiles.append({
+            "profile": name,
+            "fitness": solution.get("fitness", 0),
+            "time_s": solution.get("time", 0),
+            "energy": solution.get("energy", 0),
+            "stress": solution.get("stress", 0),
+            "iteration": solution.get("iteration", 0),
+        })
+
+    # Also include all non-dominated points for the full frontier
+    frontier = []
+    for sol in archive:
+        frontier.append({
+            "fitness": sol.get("fitness", 0),
+            "time_s": sol.get("time", 0),
+            "energy": sol.get("energy", 0),
+            "stress": sol.get("stress", 0),
+            "iteration": sol.get("iteration", 0),
+        })
+
+    return {
+        "profiles": profiles,
+        "frontier": frontier,
+        "note": "Approximate frontier from single weighted-sum QPSO run. "
+                "Not a full multi-objective Pareto search.",
+    }

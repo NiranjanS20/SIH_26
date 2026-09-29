@@ -23,6 +23,11 @@ Where:
                Uses spec T_junction formula (§3.2): 3.5×(1+cong) right, 1.5 left, 0.2 straight.
   - Fleet equity penalty via Gini coefficient (§4) — triggers steep re-allocation
     penalty when G_fleet > 0.15.
+
+NOTE ON CONSTANTS: All α-weights, normalization divisors, penalty multipliers,
+and threshold values in this module are tunable defaults calibrated from
+Mumbai urban delivery route heuristics — they are NOT universal physical
+constants. Adjust through validation against operational fleet data.
 """
 
 from __future__ import annotations
@@ -202,12 +207,14 @@ def route_energy_cost(route: List[int], problem: VRPProblem, vehicle_idx: int) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Cognitive stress α-weights (spec §2B)
+# NOTE: These are tunable defaults, not measured constants.
+# Calibrated from Mumbai urban delivery route heuristics (TRL India 2023).
 _ALPHA_CONGESTION = 1.8     # Congestion-related clutch/brake fatigue per minute
 _ALPHA_RIGHT_TURN = 2.5     # High-risk unprotected right-turn across oncoming traffic
 _ALPHA_STOP_DENSITY = 3.0   # Excess task-switching penalty per stop above 15
 
 # Speed-ratio threshold below which severe crawl penalty applies
-_SEVERE_CRAWL_SPEED_RATIO = 0.4  # < 40% of free-flow speed
+_SEVERE_CRAWL_SPEED_RATIO = 0.4  # < 40% of free-flow speed (tunable)
 
 
 class CognitiveLoadEvaluator:

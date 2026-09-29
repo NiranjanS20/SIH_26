@@ -63,3 +63,6 @@ async def stream_job(job_id: str) -> AsyncGenerator[str, None]:
             break
             
         await asyncio.sleep(0.5)
+
+def get_job(job_id: str) -> Optional[Dict[str, Any]]:
+    return JOBS.get(job_id)

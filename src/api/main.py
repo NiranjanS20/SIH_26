@@ -53,7 +53,7 @@ from src.sustainability.emissions import (
     FleetEnergyEngine,
     compute_fleet_emissions,
 )
-from src.api.jobs import create_job, update_job_progress, complete_job, fail_job, stream_job
+from src.api.jobs import create_job, update_job_progress, complete_job, fail_job, stream_job, get_job
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -91,6 +91,8 @@ class AppState:
     traffic_source: Optional[str] = None
     traffic_refreshed_at: Optional[str] = None
     traffic_updated_edges: int = 0
+    # Phase 4: Pareto archive from last QPSO solve
+    last_pareto_archive: Optional[dict] = None
     metrics: dict = {
         "total_solves": 0,
         "avg_solve_s": 0.0,
@@ -764,6 +766,15 @@ async def solve_route(req: RouteRequest):
         response["fitness"] = result.fitness
         response["iterations"] = result.iterations_run
 
+        # Phase 2: Include QAOA micro-optimization metadata
+        if hasattr(result, "qaoa_metadata") and result.qaoa_metadata:
+            response["qaoa_metadata"] = result.qaoa_metadata
+
+        # Phase 4: Store Pareto archive
+        if hasattr(result, "pareto_archive") and result.pareto_archive:
+            _state.last_pareto_archive = result.pareto_archive
+            response["pareto_available"] = True
+
         _state.last_result = response
         _state.metrics["total_solves"] += 1
 
@@ -834,6 +845,15 @@ async def start_route_job(req: RouteRequest):
             response["fitness"] = result.fitness
             response["iterations"] = result.iterations_run
 
+            # Phase 2: Include QAOA micro-optimization metadata
+            if hasattr(result, "qaoa_metadata") and result.qaoa_metadata:
+                response["qaoa_metadata"] = result.qaoa_metadata
+
+            # Phase 4: Store Pareto archive
+            if hasattr(result, "pareto_archive") and result.pareto_archive:
+                _state.last_pareto_archive = result.pareto_archive
+                response["pareto_available"] = True
+
             _state.last_result = response
             _state.metrics["total_solves"] += 1
             
@@ -853,6 +873,57 @@ async def start_route_job(req: RouteRequest):
 async def stream_route_job(job_id: str):
     """Part B: Stream solver convergence via Server-Sent Events (SSE)."""
     return StreamingResponse(stream_job(job_id), media_type="text/event-stream")
+
+
+@app.get("/route/pareto", tags=["optimizer"])
+async def get_pareto_frontier():
+    """
+    Phase 4 — Return the approximate Pareto frontier from the last QPSO solve.
+
+    Returns pre-computed non-dominated route profiles:
+      - profile_speed: minimised delivery time
+      - profile_eco: minimised battery kWh / fuel consumption
+      - profile_ergonomic: minimised right turns & driver fatigue
+
+    NOTE: This is an approximate frontier from a single weighted-sum QPSO
+    run. It samples the objective space along one direction and may miss
+    Pareto-optimal points elsewhere on the frontier, especially on
+    non-convex regions. For a rigorous Pareto front, run QPSO multiple
+    times across a sweep of weight vectors.
+    """
+    if _state.last_pareto_archive is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No Pareto archive available. Run POST /route with QPSO first.",
+        )
+    return _state.last_pareto_archive
+
+
+@app.get("/route/job/{job_id}/pareto", tags=["optimizer"])
+async def get_job_pareto_frontier(job_id: str):
+    """
+    Phase 4 — Return the approximate Pareto frontier for an asynchronous route job.
+
+    Returns pre-computed non-dominated route profiles:
+      - profile_speed: minimised delivery time
+      - profile_eco: minimised battery kWh / fuel consumption
+      - profile_ergonomic: minimised right turns & driver fatigue
+
+    NOTE: This is an approximate frontier from a single weighted-sum QPSO run;
+    not a full multi-objective search.
+    """
+    job = get_job(job_id)
+    if not job:
+        if _state.last_pareto_archive is not None:
+            return _state.last_pareto_archive
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    res = job.get("result")
+    if res and "pareto_archive" in res:
+        return res["pareto_archive"]
+    if _state.last_pareto_archive is not None:
+        return _state.last_pareto_archive
+    raise HTTPException(status_code=404, detail="Pareto profiles not ready for this job")
 
 @app.post("/route/benchmark", tags=["optimizer"])
 async def benchmark(req: BenchmarkRequest):
