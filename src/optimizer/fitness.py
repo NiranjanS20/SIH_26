@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -206,15 +206,39 @@ def route_energy_cost(route: List[int], problem: VRPProblem, vehicle_idx: int) -
 # StopDensityStrain = max(0, stop_count - 15) * 3.0
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Cognitive stress α-weights (spec §2B)
+# Cognitive stress α-weights (spec §2B & Feature #6)
 # NOTE: These are tunable defaults, not measured constants.
-# Calibrated from Mumbai urban delivery route heuristics (TRL India 2023).
-_ALPHA_CONGESTION = 1.8     # Congestion-related clutch/brake fatigue per minute
-_ALPHA_RIGHT_TURN = 2.5     # High-risk unprotected right-turn across oncoming traffic
-_ALPHA_STOP_DENSITY = 3.0   # Excess task-switching penalty per stop above 15
+# Calibrated from Mumbai urban delivery route heuristics (TRL India 2023 / SaveLIFE).
+_ALPHA_CONGESTION = 1.8       # Congestion-related clutch/brake fatigue per minute
+_ALPHA_RIGHT_TURN = 2.5       # High-risk unprotected right-turn across oncoming traffic
+_ALPHA_STOP_DENSITY = 3.0     # Excess task-switching penalty per stop above 15
+_ALPHA_URGENCY = 2.0          # Delivery-window panic multiplier (Feature #6)
+_SIGMA_SLACK_SECONDS = 900.0   # 15 minutes operational slack tolerance
 
 # Speed-ratio threshold below which severe crawl penalty applies
 _SEVERE_CRAWL_SPEED_RATIO = 0.4  # < 40% of free-flow speed (tunable)
+
+
+def compute_gini_coefficient(driver_scores: List[float]) -> float:
+    """
+    Calculates Gini coefficient of effort across fleet drivers.
+    Returns value between 0.0 (perfect equity) and 1.0 (complete inequity).
+
+    Spec: next_feature_quantum.pdf §4 & Feature-by-feature assessment #7.
+    """
+    if not driver_scores or len(driver_scores) <= 1:
+        return 0.0
+    active = [s for s in driver_scores if s > 0.0]
+    if len(active) <= 1:
+        return 0.0
+    scores = np.sort(np.array(active, dtype=np.float64))
+    n = len(scores)
+    total = np.sum(scores)
+    if total <= 1e-9:
+        return 0.0
+    index = np.arange(1, n + 1)
+    gini = ((2.0 * np.sum(index * scores)) / (n * total)) - ((n + 1.0) / n)
+    return float(np.clip(gini, 0.0, 1.0))
 
 
 class CognitiveLoadEvaluator:
@@ -223,22 +247,26 @@ class CognitiveLoadEvaluator:
     transportation-engineering factors (no biometric sensors required).
 
     Spec: next_feature_quantum.pdf §2B, §3.2 — Route Ergonomics & Cognitive Stress Reduction
-    Four additive components (Phase 2 + Phase 3):
+    Four additive components (Phase 2 + Phase 3 + Feature #6):
 
     1. Traffic Friction Index / Congestion Fatigue (C_friction)
        — speed_ratio < 0.4 triggers severe crawl: α₁=1.8 × duration_min
        — otherwise light congestion: 0.5 × duration_min
 
-    2. Junction Maneuver Risk / T_junction (Phase 3 upgrade)
-       — Phase 3 (graph available): exact OSMnx bearing → T_junction(e) formula
-         right turn: 3.5 × (1 + CongestionFactor), left: 1.5, straight: 0.2, U-turn: 4.5
-       — Phase 2 fallback (no graph): empirical 15% right-turn estimate × 2.5
+    2. Junction Maneuver Risk / T_junction (MoRTH / SaveLIFE LHD safety model)
+       — Phase 3: exact OSMnx bearing → T_junction(e) formula
+         unprotected right turn: 3.5 × (1 + CongestionFactor), left: 1.5, straight: 0.2, U-turn: 4.5
+       — Fallback (no graph): empirical 15% right-turn estimate × 2.5
 
     3. Stop Density Strain / W_density
        — +3.0 per stop exceeding 15 (task-switching overload)
 
-    4. Fleet Workload Inequity (G_fleet, Gini coefficient)
-       — CV² metric; steep penalty injected when G_fleet > 0.15
+    4. Delivery Urgency / Time-Window Panic (P_urgency) — Feature #6
+       — exp(max(0, (t_arrival - t_latest) / σ_slack)) - 1
+       — Baked directly into the swarm's search objective to prevent burnout
+
+    5. Fleet Workload Inequity (G_fleet, Gini coefficient)
+       — Steep penalty injected when G_fleet > 0.15
     """
 
     def __init__(self, road_graph=None):
@@ -255,29 +283,41 @@ class CognitiveLoadEvaluator:
         route: List[int],
         problem: VRPProblem,
         free_flow_speed_kmh: float = 40.0,
-    ) -> float:
+        return_breakdown: bool = False,
+    ):
         """
         Compute cognitive stress score for a single vehicle route.
-
-        Phase 3 upgrade: when a RoadGraph is loaded, uses exact OSMnx
-        bearing-based turn-angle detection (TurnAnalyzer) instead of
-        the Phase 2 empirical 15% right-turn estimate.
 
         Args:
             route: List of stop indices (0-based, mapped to problem.stops).
             problem: The VRPProblem instance with dist/time matrices.
             free_flow_speed_kmh: Baseline free-flow speed for this route.
+            return_breakdown: If True, returns dict with sub-scores.
 
         Returns:
-            Scalar stress score (higher = more stressful for driver).
+            Scalar stress score (higher = more stressful for driver) if return_breakdown is False,
+            otherwise dict with component breakdown.
         """
         D = problem.dist_matrix
         T = problem.time_matrix
 
         if not route:
+            if return_breakdown:
+                return {
+                    "total_score": 0.0,
+                    "friction_score": 0.0,
+                    "junction_score": 0.0,
+                    "density_score": 0.0,
+                    "urgency_score": 0.0,
+                    "burnout_risk_status": "OPTIMAL",
+                }
             return 0.0
 
-        stress_score = 0.0
+        friction_score = 0.0
+        junction_score = 0.0
+        density_score = 0.0
+        urgency_score = 0.0
+
         stop_count = len(route)
         nodes = [0] + [s + 1 for s in route] + [0]
 
@@ -299,36 +339,68 @@ class CognitiveLoadEvaluator:
             speed_ratios.append(speed_ratio)
 
             if speed_ratio < _SEVERE_CRAWL_SPEED_RATIO:
-                stress_score += _ALPHA_CONGESTION * duration_min
+                friction_score += _ALPHA_CONGESTION * duration_min
             else:
-                stress_score += 0.5 * duration_min
+                friction_score += 0.5 * duration_min
 
         # ── Component 2: Junction Maneuver Risk (T_junction) ──────────────
-        # Phase 3: use exact OSMnx geometric turn detection if graph loaded
+        # Exact OSMnx geometric turn detection if graph loaded
         if self._has_graph and hasattr(problem, "node_ids") and problem.node_ids:
-            # Build the actual OSM node ID sequence for this route
             osm_nodes = [problem.node_ids[n] for n in nodes if n < len(problem.node_ids)]
             if len(osm_nodes) >= 3:
                 turn_events = self._turn_analyzer.analyze_route(
                     osm_nodes, congestion_ratios=speed_ratios
                 )
-                junction_cost = self._turn_analyzer.total_junction_cost(turn_events)
-                stress_score += junction_cost
+                junction_score += self._turn_analyzer.total_junction_cost(turn_events)
             else:
-                # Fallback: empirical estimate
                 est = estimate_turns_from_stops(stop_count)
-                stress_score += est["total_junction_cost"]
+                junction_score += est["total_junction_cost"]
         else:
-            # Phase 2 fallback: empirical 15% right-turn estimate
-            # (TRL India 2023 Mumbai urban delivery study)
+            # Empirical 15% right-turn estimate (TRL India 2023 Mumbai study)
             estimated_right_turns = stop_count * 0.15
-            stress_score += _ALPHA_RIGHT_TURN * estimated_right_turns
+            junction_score += _ALPHA_RIGHT_TURN * estimated_right_turns
 
         # ── Component 3: Stop Density Strain (W_density) ──────────────────
         if stop_count > 15:
-            stress_score += (stop_count - 15) * _ALPHA_STOP_DENSITY
+            density_score += (stop_count - 15) * _ALPHA_STOP_DENSITY
 
-        return stress_score
+        # ── Component 4: Delivery Urgency / Time-Window Panic (P_urgency) ───
+        # Feature #6: exp(max(0, (t_arrival - t_latest) / sigma_slack)) - 1
+        current_time_s = 0.0
+        urgency_panic_total = 0.0
+
+        for i in range(len(nodes) - 1):
+            u, v = nodes[i], nodes[i + 1]
+            t_edge = float(T[u][v]) if T is not None else 10.0
+            current_time_s += max(t_edge, 0.0)
+
+            # Check if destination v is a customer stop (1-based in nodes, 0-based in route)
+            if v > 0 and (v - 1) < len(problem.stops):
+                stop = problem.stops[v - 1]
+                t_latest = getattr(stop, "latest", 86400.0)
+                t_lateness = max(0.0, current_time_s - t_latest)
+                if t_lateness > 0.0:
+                    panic = math.exp(min(t_lateness / _SIGMA_SLACK_SECONDS, 5.0)) - 1.0
+                    urgency_panic_total += panic
+                srv_s = getattr(stop, "service_time_min", 5.0) * 60.0
+                current_time_s += srv_s
+
+        urgency_score = _ALPHA_URGENCY * urgency_panic_total
+
+        total_stress = friction_score + junction_score + density_score + urgency_score
+
+        if return_breakdown:
+            burnout_status = "OPTIMAL" if total_stress < 35.0 else ("DEMANDING" if total_stress <= 60.0 else "BURNOUT_RISK")
+            return {
+                "total_score": round(total_stress, 3),
+                "friction_score": round(friction_score, 3),
+                "junction_score": round(junction_score, 3),
+                "density_score": round(density_score, 3),
+                "urgency_score": round(urgency_score, 3),
+                "burnout_risk_status": burnout_status,
+            }
+
+        return total_stress
 
     def fleet_workload_equity_penalty(
         self, per_route_scores: List[float]
@@ -340,32 +412,17 @@ class CognitiveLoadEvaluator:
           G_fleet = Σᵢ Σⱼ |Sᵢ - Sⱼ| / (2K·Σₖ Sₖ)
 
         When G_fleet > 0.15, injects a steep quadratic penalty into the swarm
-        fitness to force route re-allocation (§4: 'if G_fleet > 0.15, steep
-        quadratic penalty is injected').
-
-        Implementation uses the numerically stable sorted-array Gini formula.
+        fitness to force route re-allocation.
         """
-        active = [s for s in per_route_scores if s > 0.0]
-        if len(active) < 2:
-            return 0.0
+        gini = compute_gini_coefficient(per_route_scores)
 
-        arr = np.sort(np.array(active, dtype=float))
-        n = len(arr)
-        total = np.sum(arr)
-        if total < 1e-9:
-            return 0.0
-
-        # Gini coefficient via sorted-array formula
-        index = np.arange(1, n + 1)
-        gini = (2.0 * np.sum(index * arr) - (n + 1) * total) / (n * total)
-        gini = float(np.clip(gini, 0.0, 1.0))
-
-        # Spec §4: steep quadratic penalty when G_fleet > 0.15
+        # Spec §4: steep penalty when G_fleet > 0.15
         _GINI_THRESHOLD = 0.15
         if gini > _GINI_THRESHOLD:
             excess = gini - _GINI_THRESHOLD
-            return 10.0 * (excess ** 2)  # quadratic re-allocation pressure
+            return 15.0 * excess + 10.0 * (excess ** 2)
         return 0.0
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -495,3 +552,69 @@ class FitnessEvaluator:
             + equity_penalty        # Fleet equity term (scale-free)
             + total_viol            # Hard constraint penalties
         )
+
+
+def evaluate_swarm_fitness(
+    particle_assignment: Dict[int, List[Dict]],
+    weights: Dict[str, float],
+    energy_engine: Any,
+) -> float:
+    """
+    Evaluates particle multi-objective fitness factoring time, distance,
+    energy consumption, cognitive fatigue, and fleet equity.
+
+    Spec: next_feature_quantum.pdf §5.2 (Page 6).
+    """
+    total_time_s = 0.0
+    total_dist_m = 0.0
+    total_energy_kwh = 0.0
+    total_fuel_l = 0.0
+    driver_stress_scores: List[float] = []
+
+    for vehicle_id, route_edges in particle_assignment.items():
+        v_time = sum(e.get("duration_s", 0.0) for e in route_edges)
+        v_dist = sum(e.get("length_m", 0.0) for e in route_edges)
+        v_energy = 0.0
+        v_fuel = 0.0
+        v_stress = 0.0
+
+        for edge in route_edges:
+            e_metrics = energy_engine.calculate_edge_energy(
+                length_m=edge.get("length_m", 0.0),
+                duration_s=edge.get("duration_s", 1.0),
+                free_flow_speed_kmh=edge.get("free_flow_speed_kmh", 40.0),
+                elevation_gain_m=edge.get("elevation_gain_m", 0.0),
+            )
+            v_energy += e_metrics.get("energy_kwh", 0.0)
+            v_fuel += e_metrics.get("fuel_liters", 0.0)
+
+            # Edge-level friction stress
+            speed_ratio = (edge.get("length_m", 0.0) / max(edge.get("duration_s", 1.0), 0.1) * 3.6) / max(edge.get("free_flow_speed_kmh", 40.0), 1.0)
+            if speed_ratio < _SEVERE_CRAWL_SPEED_RATIO:
+                v_stress += _ALPHA_CONGESTION * (edge.get("duration_s", 1.0) / 60.0)
+            else:
+                v_stress += 0.5 * (edge.get("duration_s", 1.0) / 60.0)
+
+        total_time_s += v_time
+        total_dist_m += v_dist
+        total_energy_kwh += v_energy
+        total_fuel_l += v_fuel
+        driver_stress_scores.append(v_stress)
+
+    gini_inequity = compute_gini_coefficient(driver_stress_scores)
+
+    # Baselines for normalization
+    norm_time = total_time_s / 3600.0  # hours
+    norm_dist = total_dist_m / 1000.0  # km
+    norm_energy = total_energy_kwh if total_energy_kwh > 0 else (total_fuel_l * 9.8)
+    norm_stress = sum(driver_stress_scores)
+
+    composite_cost = (
+        weights.get("time", 0.35) * norm_time +
+        weights.get("dist", 0.15) * norm_dist +
+        weights.get("energy", 0.25) * norm_energy +
+        weights.get("cognitive", 0.25) * norm_stress +
+        (15.0 * gini_inequity)  # Hard penalty for fleet work imbalance
+    )
+    return composite_cost
+

@@ -40,6 +40,7 @@ parameters are tunable defaults calibrated for the Mumbai urban TSP scale.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -200,6 +201,12 @@ def solve_qaoa(
     """
     t0 = time.perf_counter()
     n = len(stop_indices)
+
+    if ibm_token is None:
+        ibm_token = os.environ.get("IBM_QUANTUM_TOKEN")
+    if not use_ibm_backend and ibm_token and len(ibm_token) > 10:
+        if os.environ.get("USE_IBM_QUANTUM", "false").lower() in ("true", "1", "yes"):
+            use_ibm_backend = True
 
     if n > _MAX_QAOA_STOPS:
         logger.warning(

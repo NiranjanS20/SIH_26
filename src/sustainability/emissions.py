@@ -227,6 +227,23 @@ class EdgeEnergyResult:
     actual_speed_kmh: float = 0.0
     is_crawl: bool = False
 
+    def __getitem__(self, key: str):
+        """Allow dict-like subscripting (e.g. result['energy_kwh'])."""
+        if hasattr(self, key):
+            val = getattr(self, key)
+            if key == "is_electric" and isinstance(val, bool):
+                return 1.0 if val else 0.0
+            return val
+        raise KeyError(key)
+
+    def get(self, key: str, default=None):
+        """Allow dict-like .get() access."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
 
 @dataclass
 class EdgeEnergyResultFull:

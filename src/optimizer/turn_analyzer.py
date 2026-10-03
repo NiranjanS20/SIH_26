@@ -68,6 +68,7 @@ class TurnEvent:
     angle_deg: float          # Actual turn angle (0–360°)
     congestion_factor: float  # Congestion ratio on approach segment
     cognitive_cost: float     # Computed T_junction score for this turn
+    is_signalized: bool = False
 
 
 def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -99,17 +100,27 @@ def _classify_turn(turn_angle: float) -> str:
         return TurnType.RIGHT
 
 
-def _junction_cognitive_cost(turn_type: str, congestion_factor: float) -> float:
+def _junction_cognitive_cost(
+    turn_type: str, congestion_factor: float, is_signalized: bool = False
+) -> float:
     """
-    Spec: next_feature_quantum.pdf §3.2 — T_junction formula.
+    Spec: next_feature_quantum.pdf §3.2 & MoRTH / SaveLIFE Foundation Safety Model.
 
-    T_junction(e) =
-      3.5 × (1 + CongestionFactor)  if right turn at non-signal (India: crosses oncoming)
-      1.5                            if left turn (free slip / merge lane)
-      0.2                            if straight crossing
-      4.5                            if U-turn (highest cognitive demand)
+    T_junction(e) formula:
+      - Unprotected right turn at non-signalized junction (India LHD: crosses oncoming lanes):
+        3.5 × (1 + CongestionFactor)
+      - Right turn at signalized junction (protected phase):
+        1.5
+      - Left turn (free slip / merging lane):
+        1.5
+      - Straight crossing:
+        0.2
+      - U-turn (high spatial demand and reverse-heading conflict):
+        4.5
     """
     if turn_type == TurnType.RIGHT:
+        if is_signalized:
+            return 1.5
         return 3.5 * (1.0 + congestion_factor)
     elif turn_type == TurnType.LEFT:
         return 1.5
@@ -117,6 +128,7 @@ def _junction_cognitive_cost(turn_type: str, congestion_factor: float) -> float:
         return 4.5
     else:  # STRAIGHT
         return 0.2
+
 
 
 class TurnAnalyzer:
@@ -195,7 +207,14 @@ class TurnAnalyzer:
             # Convert speed ratio → congestion factor: higher crawl = higher factor
             congestion_factor = max(0.0, 1.0 - cong)  # 0 = free-flow, 1 = gridlock
 
-            cost = _junction_cognitive_cost(turn_type, congestion_factor)
+            # Check signalization in road graph node attributes if available
+            is_signalized = False
+            if self.road_graph is not None and hasattr(self.road_graph, "nx_graph"):
+                node_data = self.road_graph.nx_graph.nodes.get(v, {})
+                if node_data.get("highway") == "traffic_signals" or node_data.get("signalized", False):
+                    is_signalized = True
+
+            cost = _junction_cognitive_cost(turn_type, congestion_factor, is_signalized=is_signalized)
 
             turns.append(TurnEvent(
                 node_id=v,
@@ -203,6 +222,7 @@ class TurnAnalyzer:
                 angle_deg=round(turn_angle, 1),
                 congestion_factor=round(congestion_factor, 3),
                 cognitive_cost=round(cost, 3),
+                is_signalized=is_signalized,
             ))
 
         return turns

@@ -332,6 +332,23 @@ export function fetchEcoMetrics() {
   return jsonFetch<Record<string, any>>("/fleet/eco-metrics");
 }
 
+export type QuantumHardwareStatus = {
+  status: string;
+  qiskit_version: string;
+  ibm_token_configured: boolean;
+  local_simulator: string;
+  ibm_channel: string;
+  connected_hardware: Array<{ name: string; num_qubits: number; operational: boolean }>;
+  least_busy_backend: string;
+  qubits_available: number;
+  nisq_boundary_stops: number;
+  ibm_connection_error?: string;
+};
+
+export function fetchQuantumStatus() {
+  return jsonFetch<QuantumHardwareStatus>("/quantum/status");
+}
+
 let _clientTomTomKey = (import.meta.env["VITE_TOMTOM_API_KEY"] as string | undefined) ?? "";
 
 export async function fetchClientConfig(): Promise<{ tomtom_configured?: boolean; tomtom_api_key?: string }> {

@@ -415,6 +415,109 @@ export default function QidreFleetOptimizerResultsDashboard({ navigate }: { navi
 </div>
 <span class="font-label-sm text-[11px] font-semibold text-secondary uppercase tracking-wider">Validated</span>
 </div>
+
+<!-- Closed-Loop Eco-Cognitive Multi-Objective Analytics (Tier 1 USP) -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+  <!-- Widget A: EV Range & Eco-Kinetic Analytics -->
+  <div class="p-3.5 rounded-lg bg-surface-container-low border border-surface-container flex flex-col justify-between">
+    <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+      <div class="flex items-center gap-1.5 font-headline-sm text-label-md font-bold text-on-surface">
+        <span class="material-symbols-outlined text-[18px] text-[#FF6B5B]">bolt</span>
+        <span class="text-[13px]">EV Range & Eco-Kinetic</span>
+      </div>
+      <span class="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-secondary-fixed/40 text-secondary">NREL FASTSim</span>
+    </div>
+    
+    <div class="grid grid-cols-2 gap-y-2 gap-x-2 my-2.5 font-telemetry-data text-[12px]">
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Fleet Energy</div>
+        <div class="font-bold text-on-surface text-[13px]">42.8 kWh</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Avoided Idle Loss</div>
+        <div class="font-bold text-secondary text-[13px]">7.2 kWh</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Regen Captured</div>
+        <div class="font-bold text-primary-container text-[13px]">5.1 kWh</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">CO₂ Saved vs ICE</div>
+        <div class="font-bold text-secondary text-[13px]">34.2 kg</div>
+      </div>
+    </div>
+
+    <!-- Kinetic Recovery Progress Bar -->
+    <div class="pt-2 border-t border-surface-container">
+      <div class="flex justify-between items-center text-[10px] font-telemetry-data text-on-surface-variant mb-1">
+        <span>Kinetic Recovery</span>
+        <span class="font-bold text-secondary">82%</span>
+      </div>
+      <div class="w-full h-1.5 rounded-full bg-surface-variant overflow-hidden">
+        <div class="h-full bg-secondary rounded-full" style="width: 82%"></div>
+      </div>
+      <div class="flex justify-between items-center text-[10px] font-telemetry-data text-outline mt-1.5">
+        <span>Battery Reserve at Depot</span>
+        <span class="font-semibold text-on-surface">38%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget B: Driver Cognitive Ergonomics -->
+  <div class="p-3.5 rounded-lg bg-surface-container-low border border-surface-container flex flex-col justify-between">
+    <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+      <div class="flex items-center gap-1.5 font-headline-sm text-label-md font-bold text-on-surface">
+        <span class="material-symbols-outlined text-[18px] text-primary-container">psychology</span>
+        <span class="text-[13px]">Driver Ergonomics</span>
+      </div>
+      <span class="text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-primary-fixed/40 text-primary-container">MoRTH & TLX</span>
+    </div>
+
+    <div class="grid grid-cols-2 gap-y-2 gap-x-2 my-2.5 font-telemetry-data text-[12px]">
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Avg Driver Strain</div>
+        <div class="font-bold text-on-surface text-[13px]">32.4 / 100</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Junction Risk</div>
+        <div class="font-bold text-secondary text-[13px]">Low (12 turns)</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">Workload Inequity</div>
+        <div class="font-bold text-primary-container text-[13px]">Gini 0.08 (Fair)</div>
+      </div>
+      <div>
+        <div class="text-[10px] text-outline uppercase font-medium">High-Stress Avoided</div>
+        <div class="font-bold text-secondary text-[13px]">9 Corridors</div>
+      </div>
+    </div>
+
+    <!-- Per-Driver Stress Bars -->
+    <div class="pt-2 border-t border-surface-container flex flex-col gap-1.5">
+      <div class="flex items-center justify-between text-[10px] font-telemetry-data">
+        <span class="text-outline">DRV-01 (Tata Ace EV)</span>
+        <div class="flex items-center gap-1.5">
+          <div class="w-14 h-1.5 rounded-full bg-surface-variant overflow-hidden"><div class="h-full bg-secondary rounded-full" style="width: 28%"></div></div>
+          <span class="font-semibold text-secondary">Safe 28%</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between text-[10px] font-telemetry-data">
+        <span class="text-outline">DRV-02 (Bolero Maxi)</span>
+        <div class="flex items-center gap-1.5">
+          <div class="w-14 h-1.5 rounded-full bg-surface-variant overflow-hidden"><div class="h-full bg-secondary rounded-full" style="width: 31%"></div></div>
+          <span class="font-semibold text-secondary">Safe 31%</span>
+        </div>
+      </div>
+      <div class="flex items-center justify-between text-[10px] font-telemetry-data">
+        <span class="text-outline">DRV-03 (E-Cargo 2W)</span>
+        <div class="flex items-center gap-1.5">
+          <div class="w-14 h-1.5 rounded-full bg-surface-variant overflow-hidden"><div class="h-full bg-secondary rounded-full" style="width: 34%"></div></div>
+          <span class="font-semibold text-secondary">Safe 34%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </div>
 <!-- Section 2: Multi-Solver Benchmark Matrix Strip -->
 <div>
